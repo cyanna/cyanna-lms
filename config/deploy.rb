@@ -10,6 +10,7 @@ require 'mina/git'
 #   branch       - Branch name to deploy. (needed by mina/git)
 
 set :application_name, 'Cyanna LMS'
+set :user, 'ubuntu'
 set :domain, 'lms.cyanna.com'
 set :deploy_to, '/home/ubuntu/apps/canvas'
 set :repository, 'git@github.com:cyanna/cyanna-lms.git'
