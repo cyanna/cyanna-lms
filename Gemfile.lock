@@ -42,6 +42,33 @@ GIT
       thrift (~> 0.9.0)
 
 PATH
+  remote: gems/canvas_cassandra
+  specs:
+    canvas_cassandra (0.1.0)
+      cassandra-cql (~> 1.2.2)
+      config_file
+      rails (>= 5.0)
+
+PATH
+  remote: gems/i18n_extraction
+  specs:
+    i18n_extraction (0.0.1)
+      activesupport (>= 3.2)
+      i18nliner (~> 0.1)
+      ruby_parser (~> 3.7)
+      sexp_processor (~> 4.14, >= 4.14.1)
+
+PATH
+  remote: gems/i18n_tasks
+  specs:
+    i18n_tasks (0.0.1)
+      activesupport (>= 3.2)
+      i18n (>= 0.7, < 2)
+      i18n_extraction
+      ruby_parser (~> 3.7)
+      utf8_cleaner
+
+PATH
   remote: gems/plugins/academic_benchmark
   specs:
     academic_benchmark (1.1.0)
@@ -80,33 +107,6 @@ PATH
   specs:
     simply_versioned (1.0.0)
       rails (>= 3.2)
-
-PATH
-  remote: gems/canvas_cassandra
-  specs:
-    canvas_cassandra (0.1.0)
-      cassandra-cql (~> 1.2.2)
-      config_file
-      rails (>= 5.0)
-
-PATH
-  remote: gems/i18n_extraction
-  specs:
-    i18n_extraction (0.0.1)
-      activesupport (>= 3.2)
-      i18nliner (~> 0.1)
-      ruby_parser (~> 3.7)
-      sexp_processor (~> 4.14, >= 4.14.1)
-
-PATH
-  remote: gems/i18n_tasks
-  specs:
-    i18n_tasks (0.0.1)
-      activesupport (>= 3.2)
-      i18n (>= 0.7, < 2)
-      i18n_extraction
-      ruby_parser (~> 3.7)
-      utf8_cleaner
 
 PATH
   remote: gems/rubocop-canvas
@@ -591,6 +591,8 @@ GEM
     nio4r (2.5.7)
     nokogiri (1.11.0-x86_64-darwin)
       racc (~> 1.4)
+    nokogiri (1.11.0-x86_64-linux)
+      racc (~> 1.4)
     nokogiri-xmlsec-instructure (0.9.7)
       nokogiri
     nokogumbo (2.0.4)
@@ -895,6 +897,7 @@ GEM
 
 PLATFORMS
   x86_64-darwin-20
+  x86_64-linux
 
 DEPENDENCIES
   academic_benchmark!
