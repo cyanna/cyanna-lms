@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -26,11 +28,11 @@ describe 'quizzes question banks' do
 
     before(:each) do
       course_with_teacher_logged_in
-      enable_all_rcs @course.account
+      Account.default.enable_feature!(:rce_enhancements)
       stub_rcs_config
     end
 
-    it 'adds a basic multiple choice question to a question bank', priority: "1", test_id: 140668 do
+    it 'adds a basic multiple choice question to a question bank', ignore_js_errors: true, priority: "1", test_id: 140668 do
       bank = AssessmentQuestionBank.create!(context: @course)
       get "/courses/#{@course.id}/question_banks/#{bank.id}"
 

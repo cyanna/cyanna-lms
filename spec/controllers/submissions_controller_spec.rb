@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -16,10 +18,11 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require_relative '../spec_helper'
+require 'spec_helper'
 
 describe SubmissionsController do
   it_behaves_like 'a submission update action', :submissions
+  it_behaves_like 'a submission redo_submission action', :submissions
 
   describe "POST create" do
     it "should require authorization" do
@@ -129,6 +132,56 @@ describe SubmissionsController do
             }
           }
         end
+      end
+    end
+
+    context 'setting the `resource_link_lookup_uuid` to the submission' do
+      let(:tool) do
+        Account.default.context_external_tools.create!(
+          name: 'Undertow',
+          url: 'http://www.example.com',
+          consumer_key: '12345',
+          shared_secret: 'secret'
+        )
+      end
+      let(:resource_link) do
+        Lti::ResourceLink.create(context: @course, context_external_tool: tool)
+      end
+      let(:params) do
+        {
+          course_id: @course.id,
+          assignment_id: @assignment.id,
+          submission: {
+            submission_type: 'online_url',
+          }
+        }
+      end
+
+      before do
+        course_with_student_logged_in(active_all: true)
+        @course.account.enable_service(:avatars)
+        @assignment = @course.assignments.create!(title: 'some assignment', submission_types: 'online_url')
+      end
+
+      it "should display an error when lti resource link is not found" do
+        params[:submission][:resource_link_lookup_uuid] = 'FOO&BAR'
+
+        post 'create', params: params
+
+        expect(response).to be_redirect
+        expect(assigns[:submission]).to be_nil
+        expect(flash[:error]).not_to be_nil
+        expect(flash[:error]).to match(/Resource link not found for given `resource_link_lookup_uuid`/)
+      end
+
+      it "should create the submission when lti resource link is found" do
+        params[:submission][:resource_link_lookup_uuid] = resource_link.lookup_uuid
+
+        post 'create', params: params
+
+        expect(response).to be_redirect
+        expect(assigns[:submission]).not_to be_nil
+        expect(assigns[:submission].resource_link_lookup_uuid).to eql(resource_link.lookup_uuid)
       end
     end
 
@@ -481,6 +534,167 @@ describe SubmissionsController do
         SubmissionsController.new.store_google_doc_attachment(attachment, File.open("public/images/a.png"))
         expect(attachment.instfs_uuid).to eq uuid
       end
+
+      it "gracefully reports a gdrive timeout" do
+        mock_user_service = double()
+        allow(@user).to receive(:user_services).and_return(mock_user_service)
+        expect(mock_user_service).to receive(:where).with(service: "google_drive").
+          and_return(double(first: double(token: "token", secret: "secret")))
+        google_docs = double
+        expect(GoogleDrive::Connection).to receive(:new).and_return(google_docs)
+        expect(google_docs).to receive(:download).and_raise(GoogleDrive::ConnectionException, "fake conn timeout")
+        post(:create, params: {course_id: @course.id, assignment_id: @assignment.id,
+             submission: { submission_type: 'google_doc' },
+             google_doc: { document_id: '12345' }})
+        expect(response).to be_redirect
+        expect(flash[:error]).to eq("Timed out while talking to google drive")
+      end
+
+      it "gracefully reports an invalid entry" do
+        mock_user_service = double()
+        allow(@user).to receive(:user_services).and_return(mock_user_service)
+        expect(mock_user_service).to receive(:where).with(service: "google_drive").
+          and_return(double(first: double(token: "token", secret: "secret")))
+        google_docs = double
+        expect(GoogleDrive::Connection).to receive(:new).and_return(google_docs)
+        expect(google_docs).to receive(:download).and_raise(GoogleDrive::WorkflowError, "fake bad entry")
+        post(:create, params: {course_id: @course.id, assignment_id: @assignment.id,
+             submission: { submission_type: 'google_doc' },
+             google_doc: { document_id: '12345' }})
+        expect(response).to be_redirect
+        expect(flash[:error]).to eq("Google Drive entry was unable to be downloaded")
+      end
+    end
+
+    describe "confetti celebrations" do
+      before(:each) do
+        Account.default.enable_feature!(:confetti_for_assignments)
+      end
+
+      context "submission is made before due date" do
+        before(:each) do
+          course_with_student_logged_in(:active_all => true)
+          @assignment = @course.assignments.create!(:title => "some assignment", :submission_types => "online_url,online_upload", :due_at => 5.days.from_now)
+        end
+
+        it "redirects with confetti" do
+          post 'create', params: {:course_id => @course.id, :assignment_id => @assignment.id, :submission => {:submission_type => "online_url", :url => "url"}}
+          expect(response).to be_redirect
+          expect(response).to redirect_to(/[\?&]confetti=true/)
+        end
+
+        context "confetti_for_assignments flag is disabled" do
+          before(:each) do
+            Account.default.disable_feature!(:confetti_for_assignments)
+          end
+
+          it "redirects without confetti" do
+            post 'create', params: {
+              :course_id => @course.id,
+              :assignment_id => @assignment.id,
+              :submission => {:submission_type => "online_url", :url => "url"}
+            }
+            expect(response).to be_redirect
+            expect(response).to_not redirect_to(/[\?&]confetti=true/)
+          end
+        end
+      end
+
+      context "submission is made after due date" do
+        before(:each) do
+          course_with_student_logged_in(:active_all => true)
+          @assignment = @course.assignments.create!(:title => "some assignment", :submission_types => "online_url,online_upload", :due_at => 5.days.ago)
+        end
+
+        it "redirects without confetti" do
+          post 'create', params: {:course_id => @course.id, :assignment_id => @assignment.id, :submission => {:submission_type => "online_url", :url => "url"}}
+          expect(response).to be_redirect
+          expect(response).to_not redirect_to(/[\?&]confetti=true/)
+        end
+      end
+
+      context "submission is made with no due date" do
+        before(:each) do
+          course_with_student_logged_in(:active_all => true)
+          @assignment = @course.assignments.create!(:title => "some assignment", :submission_types => "online_url,online_upload")
+        end
+
+        it "redirects with confetti" do
+          post 'create', params: {:course_id => @course.id, :assignment_id => @assignment.id, :submission => {:submission_type => "online_url", :url => "url"}}
+          expect(response).to be_redirect
+          expect(response).to redirect_to(/[\?&]confetti=true/)
+        end
+
+        context "confetti_for_assignments flag is disabled" do
+          before(:each) do
+            Account.default.disable_feature!(:confetti_for_assignments)
+          end
+
+          it "redirects without confetti" do
+            post 'create', params: {
+              :course_id => @course.id,
+              :assignment_id => @assignment.id,
+              :submission => {:submission_type => "online_url", :url => "url"}
+            }
+            expect(response).to be_redirect
+            expect(response).to_not redirect_to(/[\?&]confetti=true/)
+          end
+        end
+      end
+    end
+
+    describe "tardiness tracker" do
+      let(:course) { course_with_student_logged_in(active_all: true) && @course }
+
+      it "redirects with submitted=0 when assignment has no due date" do
+        assignment = course.assignments.create!(
+          title: "some assignment",
+          submission_types: "online_url"
+        )
+
+        post 'create', params: {
+          course_id: course.id,
+          assignment_id: assignment.id,
+          submission: { submission_type: "online_url", url: "url" }
+        }
+
+        expect(response).to be_redirect
+        expect(response).to redirect_to(/[\?&]submitted=0/)
+      end
+
+      it "redirects with submitted=1 when submission is made on time" do
+        assignment = course.assignments.create!(
+          title: "some assignment",
+          submission_types: "online_url",
+          due_at: 5.days.from_now
+        )
+
+        post 'create', params: {
+          course_id: course.id,
+          assignment_id: assignment.id,
+          submission: { submission_type: "online_url", url: "url" }
+        }
+
+        expect(response).to be_redirect
+        expect(response).to redirect_to(/[\?&]submitted=1/)
+      end
+
+      it "redirects with submitted=2 when submission is late" do
+        assignment = course.assignments.create!(
+          title: "some assignment",
+          submission_types: "online_url",
+          due_at: 1.days.ago
+        )
+
+        post 'create', params: {
+          course_id: course.id,
+          assignment_id: assignment.id,
+          submission: { submission_type: "online_url", url: "url" }
+        }
+
+        expect(response).to be_redirect
+        expect(response).to redirect_to(/[\?&]submitted=2/)
+      end
     end
   end
 
@@ -497,14 +711,13 @@ describe SubmissionsController do
       expect(a.user).to eq @teacher
       expect(a.workflow_state).to eq 'to_be_zipped'
       a.update_attribute('workflow_state', 'zipped')
-      allow(a).to receive('full_filename').and_return(File.expand_path(__FILE__)) # just need a valid file
-      allow(a).to receive('content_type').and_return('test/file')
-      allow(Attachment).to receive(:instantiate).and_return(a)
+      allow_any_instantiation_of(a).to receive('full_filename').and_return(File.expand_path(__FILE__)) # just need a valid file
+      allow_any_instantiation_of(a).to receive('content_type').and_return('test/file')
 
       request.headers['HTTP_ACCEPT'] = '*/*'
       get 'index', params: { :course_id => @course.id, :assignment_id => @assignment.id, :zip => '1' }
       expect(response).to be_successful
-      expect(response.content_type).to eq 'test/file'
+      expect(response.media_type).to eq 'test/file'
     end
   end
 
@@ -527,6 +740,7 @@ describe SubmissionsController do
     it "renders show template" do
       get :show, params: {course_id: @context.id, assignment_id: @assignment.id, id: @student.id}
       expect(response).to render_template(:show)
+      expect(assigns.dig(:js_env, :media_comment_asset_string)).to eq @teacher.asset_string
     end
 
     it "renders json with scores for teachers" do
@@ -574,8 +788,8 @@ describe SubmissionsController do
       expect(submission.read?(@teacher)).to be_falsey
     end
 
-    it "renders json with scores for teachers on muted assignments" do
-      @assignment.update!(muted: true)
+    it "renders json with scores for teachers for unposted submissions" do
+      @assignment.ensure_post_policy(post_manually: true)
       request.accept = Mime[:json].to_s
       get :show, params: {course_id: @context.id, assignment_id: @assignment.id, id: @student.id}, format: :json
       expect(body['id']).to eq @submission.id
@@ -585,9 +799,9 @@ describe SubmissionsController do
       expect(body['published_score']).to eq 10
     end
 
-    it "renders json without scores for students on muted assignments" do
+    it "renders json without scores for students for unposted submissions" do
       user_session(@student)
-      @assignment.update!(muted: true)
+      @assignment.ensure_post_policy(post_manually: true)
       request.accept = Mime[:json].to_s
       get :show, params: {course_id: @context.id, assignment_id: @assignment.id, id: @student.id}, format: :json
       expect(body['id']).to eq @submission.id
@@ -597,39 +811,124 @@ describe SubmissionsController do
       expect(body['published_score']).to be nil
     end
 
+    it "renders json without scores for students with an unposted submission for a quiz" do
+      quiz = @context.quizzes.create!
+      quiz.workflow_state = "available"
+      quiz.quiz_questions.create!({ question_data: test_quiz_data.first })
+      quiz.save!
+      quiz.assignment.ensure_post_policy(post_manually: true)
+
+      quiz_submission = quiz.generate_submission(@student)
+      Quizzes::SubmissionGrader.new(quiz_submission).grade_submission
+
+      user_session(@student)
+      request.accept = Mime[:json].to_s
+      get :show, params: {course_id: @context.id, assignment_id: quiz.assignment.id, id: @student.id}, format: :json
+      expect(body['id']).to eq quiz_submission.submission.id
+      expect(body['body']).to be nil
+    end
+
     it "renders the page for submitting student" do
       user_session(@student)
-      @assignment.update!(anonymous_grading: true, muted: true)
+      @assignment.update!(anonymous_grading: true)
+      @assignment.ensure_post_policy(post_manually: true)
       get :show, params: {course_id: @context.id, assignment_id: @assignment.id, id: @student.id}
       assert_status(200)
+      expect(assigns.dig(:js_env, :media_comment_asset_string)).to eq @student.asset_string
+    end
+
+    describe "peer reviewers" do
+      let(:course) { Course.create! }
+      let(:assignment) { course.assignments.create!(peer_reviews: true) }
+      let(:reviewer) { course.enroll_user(User.create!, "StudentEnrollment", enrollment_state: "active").user }
+      let(:reviewer_sub) { assignment.submissions.find_by!(user: reviewer) }
+      let(:student) { course.enroll_user(User.create!, "StudentEnrollment", enrollment_state: "active").user }
+      let(:student_sub) { assignment.submissions.find_by!(user: student) }
+
+      before(:each) do
+        AssessmentRequest.create!(assessor: reviewer, assessor_asset: reviewer_sub, asset: student_sub, user: student)
+        user_session(student)
+      end
+
+      it "renders okay for peer reviewer of student under view" do
+        get :show, params: {course_id: course.id, assignment_id: assignment.id, id: student.id}
+        expect(response).to have_http_status(:ok)
+      end
+
+      it "renders unauthorized for peer reviewer of a student not under view" do
+        new_student = course.enroll_user(User.create!, "StudentEnrollment", enrollment_state: "active").user
+        get :show, params: {course_id: course.id, assignment_id: assignment.id, id: new_student.id}
+        expect(response).to have_http_status(:unauthorized)
+      end
+
+      context "when anonymous grading is enabled for the assignment" do
+        before(:each) do
+          assignment.update!(anonymous_grading: true)
+        end
+
+        it "renders okay for peer reviewer of student under view" do
+          get :show, params: {course_id: course.id, assignment_id: assignment.id, id: student.id}
+          expect(response).to have_http_status(:ok)
+        end
+
+        it "renders unauthorized for peer reviewer of a student not under view" do
+          new_student = course.enroll_user(User.create!, "StudentEnrollment", enrollment_state: "active").user
+          get :show, params: {course_id: course.id, assignment_id: assignment.id, id: new_student.id}
+          expect(response).to have_http_status(:unauthorized)
+        end
+      end
+
+      context "when anonymous peer reviews are enabled for the assignment" do
+        before(:each) do
+          assignment.update!(anonymous_peer_reviews: true)
+        end
+
+        it "returns okay when a student attempts to view their own submission" do
+          get :show, params: {course_id: course.id, assignment_id: assignment.id, id: student.id}
+          expect(response).to have_http_status(:ok)
+        end
+
+        it "returns okay when a teacher attempts to view a student's submission" do
+          teacher = course.enroll_teacher(User.create!, enrollment_state: "active").user
+          user_session(teacher)
+          get :show, params: {course_id: course.id, assignment_id: assignment.id, id: student.id}
+          expect(response).to have_http_status(:ok)
+        end
+
+        it "renders unauthorized when a peer reviewer attempts to view the submission under review non-anonymously" do
+          user_session(reviewer)
+          get :show, params: {course_id: course.id, assignment_id: assignment.id, id: student.id}
+          expect(response).to have_http_status(:unauthorized)
+        end
+      end
     end
 
     it "renders unauthorized for non-submitting student" do
       new_student = User.create!
       @context.enroll_student(new_student, enrollment_state: 'active')
       user_session(new_student)
-      @assignment.update!(anonymous_grading: true, muted: true)
+      @assignment.update!(anonymous_grading: true)
       get :show, params: {course_id: @context.id, assignment_id: @assignment.id, id: @student.id}
       assert_unauthorized
     end
 
     it "renders unauthorized for teacher" do
       user_session(@teacher)
-      @assignment.update!(anonymous_grading: true, muted: true)
+      @assignment.update!(anonymous_grading: true)
       get :show, params: {course_id: @context.id, assignment_id: @assignment.id, id: @student.id}
       assert_unauthorized
     end
 
     it "renders unauthorized for admin" do
       user_session(account_admin_user)
-      @assignment.update!(anonymous_grading: true, muted: true)
+      @assignment.update!(anonymous_grading: true)
       get :show, params: {course_id: @context.id, assignment_id: @assignment.id, id: @student.id}
       assert_unauthorized
     end
 
     it "renders the page for site admin" do
       user_session(site_admin_user)
-      @assignment.update!(anonymous_grading: true, muted: true)
+      @assignment.update!(anonymous_grading: true)
       get :show, params: {course_id: @context.id, assignment_id: @assignment.id, id: @student.id}
       assert_status(200)
     end
@@ -659,6 +958,7 @@ describe SubmissionsController do
       @association = @rubric.associate_with @assignment, @context, :purpose => 'grading'
       @assignment.peer_reviews = true
       @assignment.save!
+      @assignment.unmute!
       @assignment.assign_peer_review(@assessor, @submission.user)
       @assessment = @association.assess(:assessor => @assessor, :user => @submission.user, :artifact => @submission, :assessment => { :assessment_type => 'grading'})
       user_session(@assessor)
@@ -702,6 +1002,34 @@ describe SubmissionsController do
     it 'redirects to the originality report URL if it exists' do
       get 'originality_report', params: {course_id: assignment.context_id, assignment_id: assignment.id, submission_id: test_student.id, asset_string: attachment.asset_string}
       expect(response).to redirect_to originality_report.originality_report_url
+    end
+
+    context 'when there are multiple originality reports' do
+      let(:submission2) { assignment.submit_homework(test_student, body: 'hello world') }
+      let(:report_url2) { 'http://www.another-test-score.com/' }
+      let(:originality_report2) {
+        OriginalityReport.create!(attachment: nil,
+                                  submission: submission2,
+                                  originality_score: 0.4,
+                                  originality_report_url: report_url2)
+      }
+
+      it 'can use attempt number to find the report url for text entry submissions' do
+        originality_report2 # Create immediately
+        originality_report.update!(attachment: nil)
+        expect(submission2.id).to eq(submission.id) # submission2 is updated/reloaded with new version (last attempt number)
+        expect(submission2.attempt).to be > submission.attempt
+        get 'originality_report', params: {
+          course_id: assignment.context_id, assignment_id: assignment.id, submission_id: test_student.id,
+          asset_string: submission.asset_string, attempt: 1
+        }
+        expect(response).to redirect_to originality_report.originality_report_url
+        get 'originality_report', params: {
+          course_id: assignment.context_id, assignment_id: assignment.id, submission_id: test_student.id,
+          asset_string: submission.asset_string, attempt: 2
+        }
+        expect(response).to redirect_to originality_report2.originality_report_url
+      end
     end
 
     it 'returns bad_request if submission_id is not an integer' do
@@ -951,43 +1279,94 @@ describe SubmissionsController do
         expect(returned_users).to include(hash_including({"id" => first_student.id, "role" => "student" }))
       end
     end
-  end
 
-  describe "copy_attachments_to_submissions_folder" do
-    before(:once) do
-      course_with_student
-      @course.account.enable_service(:avatars)
-      attachment_model(context: @student)
+    describe "external tool events" do
+      let(:external_tool) do
+        Account.default.context_external_tools.create!(
+          name: "Undertow",
+          url: "http://www.example.com",
+          consumer_key: '12345',
+          shared_secret: 'secret'
+        )
+      end
+      let(:returned_tools) { json_parse(response.body).fetch("tools") }
+      let(:external_tool_events) do
+        json_parse(response.body).fetch("audit_events").select do |event|
+          event.fetch("event_type").include?("submission_") && event.fetch("context_external_tool_id").present?
+        end
+      end
+
+      before(:each) { @assignment.grade_student(first_student, grader_id: -external_tool.id, score: 80) }
+
+      it "returns an event for external tool" do
+        get :audit_events, params: params, format: :json
+        expect(external_tool_events.count).to be 1
+      end
+
+      it "returns the name associated with an external tool" do
+        get :audit_events, params: params, format: :json
+        expect(returned_tools).to include(hash_including({ "id" => external_tool.id, "name" => "Undertow" }))
+      end
+
+      it "returns the role of grader for an external tool" do
+        get :audit_events, params: params, format: :json
+        expect(returned_tools).to include(hash_including({ "id" => external_tool.id, "role" => "grader" }))
+      end
     end
 
-    it "copies a user attachment into the user's submissions folder" do
-      atts = SubmissionsController.copy_attachments_to_submissions_folder(@course, [@attachment])
-      expect(atts.length).to eq 1
-      expect(atts[0]).not_to eq @attachment
-      expect(atts[0].folder).to eq @student.submissions_folder(@course)
-    end
+    describe "quiz events" do
+      let(:quiz) do
+        quiz = @course.quizzes.create!
+        quiz.workflow_state = "available"
+        quiz.quiz_questions.create!({ question_data: test_quiz_data.first })
+        quiz.save!
+        quiz.assignment.updating_user = @teacher
+        quiz.assignment.update_attribute(:anonymous_grading, true)
 
-    it "leaves files already in submissions folders alone" do
-      @attachment.folder = @student.submissions_folder(@course)
-      @attachment.save!
-      atts = SubmissionsController.copy_attachments_to_submissions_folder(@course, [@attachment])
-      expect(atts).to eq [@attachment]
-    end
+        qsub = Quizzes::SubmissionManager.new(quiz).find_or_create_submission(first_student)
+        qsub.quiz_data = test_quiz_data
+        qsub.started_at = 1.minute.ago
+        qsub.attempt = 1
+        qsub.submission_data = [{:points=>0, :text=>"7051", :question_id=>128, :correct=>false, :answer_id=>7051}]
+        qsub.score = 0
+        qsub.save!
+        qsub.finished_at = Time.now.utc
+        qsub.workflow_state = 'complete'
+        qsub.submission = quiz.assignment.find_or_create_submission(first_student)
+        qsub.submission.audit_grade_changes = true
+        qsub.with_versioning(true) { qsub.save! }
 
-    it "copies a group attachment into the group submission folder" do
-      group_model(context: @course)
-      attachment_model(context: @group)
-      atts = SubmissionsController.copy_attachments_to_submissions_folder(@course, [@attachment])
-      expect(atts.length).to eq 1
-      expect(atts[0]).not_to eq @attachment
-      expect(atts[0].folder).to eq @group.submissions_folder
-    end
+        quiz
+      end
+      let(:quiz_assignment) { quiz.assignment }
+      let(:quiz_audit_params) do
+        {
+          assignment_id: quiz_assignment.id,
+          course_id: @course.id,
+          submission_id: quiz_assignment.submissions.find_by!(user: first_student).id
+        }
+      end
+      let(:returned_quizzes) { json_parse(response.body).fetch("quizzes") }
+      let(:quiz_events) do
+        json_parse(response.body).fetch("audit_events").select do |event|
+          event.fetch("event_type").include?("submission_") && event.fetch("quiz_id").present?
+        end
+      end
 
-    it "leaves files in non user/group context alone" do
-      assignment_model(context: @course)
-      weird_file = @assignment.attachments.create! display_name: 'blah', uploaded_data: default_uploaded_data
-      atts = SubmissionsController.copy_attachments_to_submissions_folder(@course, [weird_file])
-      expect(atts).to eq [weird_file]
+      it "returns an event for a quiz" do
+        get :audit_events, params: quiz_audit_params, format: :json
+        expect(quiz_events.count).to be 1
+      end
+
+      it "returns the name associated with the quiz" do
+        get :audit_events, params: quiz_audit_params, format: :json
+        expect(returned_quizzes).to include(hash_including({ "id" => quiz.id, "name" => "Unnamed Quiz" }))
+      end
+
+      it "returns the role of grader for a quiz" do
+        get :audit_events, params: quiz_audit_params, format: :json
+        expect(returned_quizzes).to include(hash_including({ "id" => quiz.id, "role" => "grader" }))
+      end
     end
   end
 end

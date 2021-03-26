@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -193,12 +195,16 @@ module Api::V1::AssignmentOverride
     [:due_at, :unlock_at, :lock_at].each do |field|
       next unless data.key?(field)
 
-      if data[field].blank?
-        # override value of nil/'' is meaningful
-        override_data[field] = nil
-      elsif value = Time.zone.parse(data[field].to_s)
-        override_data[field] = value
-      else
+      begin
+        if data[field].blank?
+          # override value of nil/'' is meaningful
+          override_data[field] = nil
+        elsif value = Time.zone.parse(data[field].to_s)
+          override_data[field] = value
+        else
+          errors << "invalid #{field} #{data[field].inspect}"
+        end
+      rescue
         errors << "invalid #{field} #{data[field].inspect}"
       end
     end
@@ -377,7 +383,7 @@ module Api::V1::AssignmentOverride
   def invisible_users_and_overrides_for_user(context, user, existing_overrides)
     # get the student overrides the user can't see and ensure those overrides are included
     visible_user_ids = context.enrollments_visible_to(user).select(:user_id)
-    invisible_user_ids = context.users.where.not(id: visible_user_ids).pluck(:id)
+    invisible_user_ids = context.enrollments.where.not(:user_id => visible_user_ids).distinct.pluck(:user_id)
     invisible_override_ids = existing_overrides.select{ |ov|
       ov.set_type == 'ADHOC' &&
       !ov.visible_student_overrides(visible_user_ids)
@@ -456,6 +462,7 @@ module Api::V1::AssignmentOverride
       prepared_overrides[:overrides_to_create].size + prepared_overrides[:overrides_to_update].size
 
     assignment.touch # invalidate cached list of overrides for the assignment
+    assignment.assignment_overrides.reset # unload the obsolete association
     assignment.run_if_overrides_changed_later!(updating_user: updating_user)
   end
 

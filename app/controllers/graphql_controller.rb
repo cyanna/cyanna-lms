@@ -16,19 +16,28 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
+# pre-build the graphql schema (which is expensive and slow) so that the first
+# request is not slow and terrible
+CanvasSchema.graphql_definition
+
 class GraphQLController < ApplicationController
   include Api::V1
 
-  before_action :require_user, except: :execute
-
+  before_action :require_user, if: :require_auth?
 
   def execute
     query = params[:query]
     variables = params[:variables] || {}
     context = {
       current_user: @current_user,
+      real_current_user: @real_current_user,
       session: session,
       request: request,
+      domain_root_account: @domain_root_account,
+      access_token: @access_token,
+      in_app: in_app?,
+      deleted_models: {},
+      request_id: (Thread.current[:context] || {})[:request_id],
       tracers: [
         Tracers::DatadogTracer.new(
           request.host_with_port.sub(':', '_'),
@@ -38,14 +47,9 @@ class GraphQLController < ApplicationController
     }
     result = nil
 
-    overall_timeout = Setting.get('graphql_overall_timeout', '300').to_i.seconds
+    overall_timeout = Setting.get('graphql_overall_timeout', '60').to_i.seconds
     Timeout.timeout(overall_timeout) do
-      ActiveRecord::Base.transaction do
-        statement_timeout = Integer(Setting.get('graphql_statement_timeout', '60_000'))
-        ActiveRecord::Base.connection.execute "SET statement_timeout = #{statement_timeout}"
-
-        result = CanvasSchema.execute(query, variables: variables, context: context)
-      end
+      result = CanvasSchema.execute(query, variables: variables, context: context)
     end
 
     render json: result
@@ -54,5 +58,15 @@ class GraphQLController < ApplicationController
   def graphiql
     @page_title = "GraphiQL"
     render :graphiql, layout: 'bare'
+  end
+
+  private
+
+  def require_auth?
+    if action_name == 'execute'
+      return !::Account.site_admin.feature_enabled?(:disable_graphql_authentication)
+    end
+
+    true
   end
 end

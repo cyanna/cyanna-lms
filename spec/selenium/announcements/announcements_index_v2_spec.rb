@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -16,8 +18,8 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 
 require_relative '../common'
-require_relative './announcement_index_page'
-require_relative './external_feed_page'
+require_relative 'pages/announcement_index_page'
+require_relative 'pages/external_feed_page'
 
 describe "announcements index v2" do
   include_context "in-process server selenium tests"
@@ -50,7 +52,7 @@ describe "announcements index v2" do
 
     before :each do
       user_session(@teacher)
-      AnnouncementIndex.visit(@course)
+      AnnouncementIndex.visit_announcements(@course.id)
     end
 
     it "announcements can be filtered", test_id: 3469716, priority: "1" do

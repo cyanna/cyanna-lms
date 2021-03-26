@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -42,7 +44,7 @@ module SpecTimeLimit
   class << self
     def enforce(example)
       type, timeout = timeout_for(example)
-      Timeout.timeout(timeout, Error.new(Error.message_for(type, timeout))) do
+      Timeout.timeout(timeout, Error, Error.message_for(type, timeout)) do
         example.run
       end
       # no error handling needed, since rspec will catch the error and
@@ -51,8 +53,13 @@ module SpecTimeLimit
 
     # find an appropriate timeout for this spec
     def timeout_for(example)
-      if ENV.fetch("SELENIUM_REMOTE_URL", "undefined remote url").include? "saucelabs"
+      if example.metadata[:custom_timeout]
+        raise "Custom timeouts cannot exceed #{ABSOLUTE_TIMEOUT} seconds!" if example.metadata[:custom_timeout].to_i > ABSOLUTE_TIMEOUT
+        [:target, example.metadata[:custom_timeout].to_i]
+      elsif ENV.fetch("SELENIUM_REMOTE_URL", "undefined remote url").include? "saucelabs"
         [:status_quo, SAUCELABS_ABSOLUTE_TIMEOUT]
+      elsif example.file_path.match? /\.\/spec\/selenium\/.*rcs/ # files in ./spec/selenium/**/rcs
+        [:target, SIDEBAR_LOADING_TIMEOUT]
       elsif example.file_path.include? "./spec/selenium/performance/"
         [:status_quo, PERFORMANCE_TIMEOUT]
       elsif (timeout = typical_time_for(example))
@@ -71,6 +78,7 @@ module SpecTimeLimit
     PERFORMANCE_TIMEOUT = ENV.fetch("SPEC_TIME_LIMIT_PERFORMANCE", 120).to_i
     ABSOLUTE_TIMEOUT = ENV.fetch("SPEC_TIME_LIMIT_ABSOLUTE", 60).to_i
     TARGET_TIMEOUT = ENV.fetch("SPEC_TIME_LIMIT_TARGET", 15).to_i
+    SIDEBAR_LOADING_TIMEOUT = ENV.fetch("SIDEBAR_LOADING_TIMEOUT", 35).to_i
 
     def typical_time_for(example)
       return unless defined?(TestQueue::Runner::RSpec::GroupQueue)
@@ -88,7 +96,7 @@ module SpecTimeLimit
       #
       # furthermore, these are exempt from rerun thresholds so your build
       # will likely still pass if it was a total fluke.
-      ((stats[stat_key] * 2) + 5).ceil
+      ((stats[stat_key] * 3) + 5).ceil
     end
 
     def stats

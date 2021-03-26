@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2014 - present Instructure, Inc.
 #
@@ -86,6 +88,41 @@ describe CanvasPartman::PartitionManager do
         expect(subject.base_class.connection).to receive(:drop_table).with('partman_animals_2014_10')
         subject.prune_partitions(6)
       end
+
+      it "prunes weekly partitions too" do
+        expect(Time).to receive(:now).and_return(Time.utc(2015, 02, 05))
+        allow(Animal).to receive(:partitioning_interval).and_return(:weeks)
+        expect(subject).to receive(:partition_tables).and_return(%w{
+          partman_animals_2015_01
+          partman_animals_2015_02
+          partman_animals_2015_03
+          partman_animals_2015_04
+          partman_animals_2015_05
+          partman_animals_2015_06
+        })
+
+        expect(subject.base_class.connection).to receive(:drop_table).with('partman_animals_2015_01')
+        expect(subject.base_class.connection).to receive(:drop_table).with('partman_animals_2015_02')
+        subject.prune_partitions(3)
+      end
+    end
+  end
+
+  context "by_date + weeks" do
+    subject { CanvasPartman::PartitionManager.create(WeekEvent) }
+
+    describe '#create_partition' do
+      it 'creates partitions suffixed by year and week number' do
+        expect {
+          subject.create_partition(Time.new(2018, 12, 24))
+          subject.create_partition(Time.new(2018, 12, 31)) # beginning of next year's first week
+          subject.create_partition(Time.new(2021, 1, 1)) # part of last year's 53rd week
+        }.not_to raise_error
+
+        expect(SchemaHelper.table_exists?('partman_week_events_2018_52')).to be true
+        expect(SchemaHelper.table_exists?('partman_week_events_2019_01')).to be true
+        expect(SchemaHelper.table_exists?('partman_week_events_2020_53')).to be true
+      end
     end
   end
 
@@ -108,6 +145,15 @@ describe CanvasPartman::PartitionManager do
         expect(foreign_key.to_table).to eq("partman_zoos")
         expect(foreign_key.options.except(:name)).to eq(parent_foreign_key.options.except(:name))
       end
+
+      it "uses timeout protection" do
+        timeout_count = 0
+        allow(Trail.connection).to receive(:execute) do |statement|
+          timeout_count += 1 if statement =~ /SET LOCAL statement_timeout=90000/
+        end
+        subject.create_partition(0)
+        expect(timeout_count).to eq(1)
+      end
     end
 
     describe "#create_initial_partitions" do
@@ -126,6 +172,7 @@ describe CanvasPartman::PartitionManager do
     describe "#ensure_partitions" do
       it "creates the proper number of partitions" do
         expect(subject).to receive(:partition_tables).and_return([])
+        expect(Zoo).to receive(:maximum).and_return(nil)
         expect(subject).to receive(:create_partition).with(0)
         expect(subject).to receive(:create_partition).with(5)
 
@@ -134,11 +181,34 @@ describe CanvasPartman::PartitionManager do
 
       it "detects when enough partitions already exist" do
         expect(subject).to receive(:partition_tables).and_return(['partman_trails_0', 'partman_trails_1'])
-        expect(subject.base_class).to receive(:from).twice.and_return(Trail.none)
+        expect(Zoo).to receive(:maximum).and_return(nil)
         expect(subject).to receive(:create_partition).never
 
         subject.ensure_partitions(2)
       end
+
+      it "detects how many partitions are needed based on the foreign key table" do
+        expect(subject).to receive(:partition_tables).and_return([])
+        expect(Zoo).to receive(:maximum).and_return(7)
+
+        expect(subject).to receive(:create_partition).with(0)
+        expect(subject).to receive(:create_partition).with(5) # catches up
+        expect(subject).to receive(:create_partition).with(10)
+        expect(subject).to receive(:create_partition).with(15) # and adds two more
+
+        subject.ensure_partitions(2)
+      end
+    end
+  end
+
+  describe '#with_timeout_protection' do
+    it 'errors if the query goes beyond the timeout' do
+      pm = CanvasPartman::PartitionManager.create(Trail)
+      expect do
+        pm.with_statement_timeout(timeout_override: 1) do
+          pm.send(:execute, "select pg_sleep(5)")
+        end
+      end.to raise_error(ActiveRecord::QueryCanceled)
     end
   end
 end

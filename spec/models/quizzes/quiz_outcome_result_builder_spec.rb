@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -76,6 +78,9 @@ describe Quizzes::QuizOutcomeResultBuilder do
       expect(@quiz_results.size).to eql(1)
       expect(@question_results.size).to eql(2)
     end
+    it "should have root account ids on learning outcome question results" do
+      expect(@question_results.first.root_account_id).to eq @course.root_account_id
+    end
     it 'should consider scores in aggregate' do
       expect(@quiz_result.possible).to eql(2.0)
       expect(@quiz_result.score).to eql(1.0)
@@ -83,6 +88,25 @@ describe Quizzes::QuizOutcomeResultBuilder do
     it "shouldn't declare mastery" do
       expect(@quiz_result.mastery).to eql(false)
     end
+
+    context 'with long quiz titles' do
+      before :once do
+       @user.update!(name: 'a'*255)
+       @sub.update_scores({
+        'context_id' => @course.id,
+        'override_scores' => true,
+        'context_type' => 'Course',
+        'submission_version_number' => '1',
+        "question_score_#{@q2.id}" => '0'
+      })
+      end
+
+      it "truncates result.title and question_result.title to 250 characters" do
+        expect(@quiz_result.reload.title.length).to eq 250
+        @question_results.each { |result| expect(result.title.length).to eq 250 }
+      end
+    end
+
     context 'with two outcomes' do
       before :once do
         course_with_student(active_all: true)

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -49,8 +51,8 @@ describe 'submissions' do
         wait_for_ajaximations
 
         # clicking the add file button and selecting the fake pdf I uploaded
-        fj('.plus').click
-        fj('.pdf > span.text.name').click
+        f('li[aria-label="My files"] button').click
+        f('li[aria-label="example.pdf"] button').click
 
         wait_for_new_page_load(f('button[type="submit"]').click)
 
@@ -59,6 +61,7 @@ describe 'submissions' do
       end
 
       it 'Submitting Group Assignments - No File Warning', priority: "1", test_id: 238165 do
+        skip('investigate in CCI-182')
         create_assignment_for_group('online_upload')
         get "/courses/#{@course.id}/assignments/#{@assignment.id}"
         f('.submit_assignment_link').click

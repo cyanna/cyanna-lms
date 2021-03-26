@@ -24,17 +24,24 @@
       <tr>
         <td colspan="2">
           <%= t :upload_or_choose_file, "Upload a file, or choose a file you've already uploaded." %>
-            <%= render :partial => "assignments/group_submission_reminder" if @assignment.has_group_category? %>
+          <%= render :partial => "assignments/group_submission_reminder" if @assignment.has_group_category? %>
         </td>
       </tr><tr>
-        <td><%= blabel :attachment, :uploaded_data, :en => "File", id: 'attachmentLabel' %></td>
-        <td>
-          <a href="#" class="add_another_file_link">
+        <td colspan="2">
+          <span style="visibility: hidden"><%= blabel :attachment, :uploaded_data, :en => "File", id: 'attachmentLabel' %></span>
+          <button class="Button Button--link add_another_file_link">
             <i class="icon-add" aria-hidden="true"></i>
             <%= t 'links.add_another_file', "Add Another File" %>
-          </a>
-          <div id="submission_attachment_blank" class="submission_attachment" style="display: none;">
-            <input aria-labelledby="attachmentLabel" type="file" name="attachments[-1][uploaded_data]" class="input-file"/>
+          </button>
+          <div id="submission_attachment_blank" class="submission_attachment" style="display: none; margin-bottom: 1em;">
+            <% if @domain_root_account.feature_enabled?(:enable_webcam_submission) && (
+              @assignment.allowed_extensions.blank? || @assignment.allowed_extensions.include?("png")
+            )
+            %>
+              <div class="attachment_wrapper" style="display: inline-block;"></div>
+            <% else %>
+              <input type="file" name="attachments[-1][uploaded_data]" class="input-file"/>
+            <% end %>
             <a href="#" class="remove_attachment_link no-hover" style="display: none;"><i class="icon-end" aria-hidden="true"></i><span class="screenreader-only"><%= t('remove empty attachment')%></span></a>
             <% if @assignment.allowed_extensions.present? -%>
               <div class='bad_ext_msg error_message' style="display: none">
@@ -48,13 +55,8 @@
       <tr>
         <td></td>
         <td style="font-size: 0.8em;">
-        <a href="#" class="toggle_uploaded_files_link"><%= t 'links.find_file', "Click here to find a file you've already uploaded" %></a><br/>
-        <div id="uploaded_files" style="display: none;">
-          <% folders = @current_user.folders.active %>
-          <% content = (render :partial => "files/nested_content", :object => (folders.select{|f| !f.parent_folder_id}), :locals => {:folders => folders}) %>
-          <%= t(:no_files, "No Files") if @current_user.attachments.active.empty? || !content || content.strip.empty? %>
-          <%= content %>
-        </div>
+          <button class="Button Button--link toggle_uploaded_files_link"><%= t 'links.find_file', "Click here to find a file you've already uploaded" %></button><br/>
+          <div id="uploaded_files" style="display: none;" />
         </td>
       </tr>
       <% end %>
@@ -75,10 +77,7 @@
         <td colspan="2" class='button-container'>
           <button type="button" class='cancel_button btn'><%= t '#buttons.cancel', "Cancel" %></button>
           <button type="submit" class="btn btn-primary" id="submit_file_button"><%= t 'buttons.submit_assignment', "Submit Assignment" %></button>
-        </td>
-      </tr><tr style="display: none;">
-        <td colspan="2" style="text-align: center;">
-          <%= t 'messages.submitting', "Submitting..." %> <img src=""/>
+          <span id="progress_indicator"></span>
         </td>
       </tr>
     </table>

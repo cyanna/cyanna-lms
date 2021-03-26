@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -212,8 +214,9 @@ module PlannerPageObject
     f(dismiss_opportunity_button_selector(item_name))
   end
 
-  def list_view_planner_items
-    ff('div.planner-item')
+  # finds planner item by any unique text within it (header is usually good)
+  def list_view_planner_item(text)
+    fj("div.planner-item:contains('#{text}')")
   end
 
   def planner_item_status_checkbox(object_type, object_name)

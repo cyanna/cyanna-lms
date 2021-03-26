@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -90,5 +92,15 @@ module Factories
     group_model(name: 'Project Group 1', group_category: @group_category, context: @context)
     opts[:group_category] = @group_category
     @group_topic = @context.discussion_topics.create!(valid_discussion_topic_attributes.merge(opts))
+  end
+
+  def graded_discussion_topic(opts = {})
+    @topic = discussion_topic_model(opts)
+    @assignment = @topic.context.assignments.build(:submission_types => 'discussion_topic', :title => @topic.title)
+    @assignment.infer_times
+    @assignment.saved_by = :discussion_topic
+    @topic.assignment = @assignment
+    @topic.save
+    @topic
   end
 end

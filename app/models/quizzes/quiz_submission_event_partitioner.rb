@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2014 - present Instructure, Inc.
 #
@@ -18,25 +20,33 @@
 class Quizzes::QuizSubmissionEventPartitioner
   cattr_accessor :logger
 
-  def self.process
-    Shackles.activate(:deploy) do
-      Quizzes::QuizSubmissionEvent.transaction do
-        log '*' * 80
-        log '-' * 80
+  def self.precreate_tables
+    Setting.get('quiz_events_partitions_precreate_months', 2).to_i
+  end
 
-        partman = CanvasPartman::PartitionManager.create(Quizzes::QuizSubmissionEvent)
+  def self.process(in_migration=false)
+    GuardRail.activate(:deploy) do
+      log '*' * 80
+      log '-' * 80
 
-        partman.ensure_partitions(Setting.get('quiz_events_partitions_precreate_months', 2).to_i)
+      partman = CanvasPartman::PartitionManager.create(Quizzes::QuizSubmissionEvent)
 
-        partman.prune_partitions(Setting.get("quiz_events_partitions_keep_months", 6).to_i)
+      partman.ensure_partitions(precreate_tables)
 
-        log 'Done. Bye!'
-        log '*' * 80
-      end
+      Shard.current.database_server.unguard {partman.prune_partitions(Setting.get("quiz_events_partitions_keep_months", 6).to_i)}
+
+      log 'Done. Bye!'
+      log '*' * 80
+      ActiveRecord::Base.connection_pool.current_pool.disconnect! unless in_migration || Rails.env.test?
     end
   end
 
   def self.log(*args)
     logger.info(*args) if logger
+  end
+
+  def self.processed?
+    partman = CanvasPartman::PartitionManager.create(Quizzes::QuizSubmissionEvent)
+    partman.partitions_created?(precreate_tables - 1)
   end
 end

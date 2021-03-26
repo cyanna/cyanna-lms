@@ -25,7 +25,6 @@ class AnnouncementsController < ApplicationController
   before_action { |c| c.active_tab = "announcements" }
 
   def announcements_locked?
-    return true if @context.account.lock_all_announcements[:locked]
     return false unless @context.is_a?(Course)
     @context.lock_all_announcements?
   end
@@ -53,6 +52,24 @@ class AnnouncementsController < ApplicationController
         css_bundle :announcements_index
 
         set_tutorial_js_env
+
+        feed_key = nil
+        if @context_enrollment
+          feed_key = @context_enrollment.feed_code
+        elsif can_do(@context, @current_user, :manage)
+          feed_key = @context.feed_code
+        elsif @context.available? && @context.respond_to?(:is_public) && @context.is_public
+          feed_key = @context.asset_string
+        end
+        if feed_key
+          if @context.is_a?(Course)
+            content_for_head helpers.auto_discovery_link_tag(:atom, feeds_announcements_format_path(feed_key, :atom), {:title => t(:feed_title_course, "Course Announcements Atom Feed")})
+            content_for_head helpers.auto_discovery_link_tag(:rss, feeds_announcements_format_path(feed_key, :rss), {:title => t(:podcast_title_course, "Course Announcements Podcast Feed")})
+          elsif @context.is_a?(Group)
+            content_for_head helpers.auto_discovery_link_tag(:atom, feeds_announcements_format_path(feed_key, :atom), {:title => t(:feed_title_group, "Group Announcements Atom Feed")})
+            content_for_head helpers.auto_discovery_link_tag(:rss, feeds_announcements_format_path(feed_key, :rss), {:title => t(:podcast_title_group, "Group Announcements Podcast Feed")})
+          end
+        end
       end
     end
   end
@@ -63,11 +80,12 @@ class AnnouncementsController < ApplicationController
 
   def public_feed
     return unless get_feed_context
-    announcements = @context.announcements.published.order('posted_at DESC').limit(15).
+
+    announcements = @context.announcements.published.by_posted_at.limit(15).
       select{|a| a.visible_for?(@current_user) }
 
     respond_to do |format|
-      format.atom {
+      format.atom do
         feed = Atom::Feed.new do |f|
           f.title = t(:feed_name, "%{course} Announcements Feed", :course => @context.name)
           f.links << Atom::Link.new(:href => polymorphic_url([@context, :announcements]), :rel => 'self')
@@ -78,7 +96,8 @@ class AnnouncementsController < ApplicationController
           feed.entries << e.to_atom
         end
         render :plain => feed.to_xml
-      }
+      end
+
       format.rss {
         @announcements = announcements
         require 'rss/2.0'

@@ -29,7 +29,6 @@ import 'jquery.disableWhileLoading'
 GradeSummary.setup()
 
 class GradebookSummaryRouter extends Backbone.Router {
-
   initialize() {
     if (!ENV.student_outcome_gradebook_enabled) return
     $('#content').tabs({activate: this.activate})
@@ -78,7 +77,10 @@ GradebookSummaryRouter.prototype.routes = {
   'tab-:route(/*path)': 'tab'
 }
 
-GradeSummary.renderSelectMenuGroup()
+let router
+$(() => {
+  GradeSummary.renderSelectMenuGroup()
 
-var router = new GradebookSummaryRouter()
-Backbone.history.start()
+  router = new GradebookSummaryRouter()
+  Backbone.history.start()
+})

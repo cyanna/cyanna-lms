@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -154,7 +156,7 @@ describe AccessToken do
       @at.developer_key = dk
       @at.save
 
-      expect(@at.usable?).to eq false
+      expect(@at.reload.usable?).to eq false
     end
 
     it "Shouldn't be usable if dev key isn't active, even if we request with a refresh token" do
@@ -164,7 +166,7 @@ describe AccessToken do
       @at.developer_key = dk
       @at.save
 
-      expect(@at.usable?(:crypted_refresh_token)).to eq false
+      expect(@at.reload.usable?(:crypted_refresh_token)).to eq false
     end
   end
 
@@ -422,19 +424,41 @@ describe AccessToken do
 
     describe 'adding scopes' do
       let(:dev_key) { DeveloperKey.create! require_scopes: true, scopes: TokenScopes.all_scopes.slice(0,10)}
+      let(:access_token) { AccessToken.new(user: user_model, developer_key: dev_key, scopes: scopes) }
+      let(:scopes) { [TokenScopes.all_scopes[12]] }
 
       before do
         allow_any_instance_of(Account).to receive(:feature_enabled?).and_return(false)
       end
 
       it 'is invalid when scopes requested are not included on dev key' do
-        access_token = AccessToken.new(user: user_model, developer_key: dev_key, scopes: [TokenScopes.all_scopes[12]])
         expect(access_token).not_to be_valid
       end
 
-      it 'is valid when scopes requested are included on dev key' do
-        access_token = AccessToken.new(user: user_model, developer_key: dev_key, scopes: [TokenScopes.all_scopes[8], TokenScopes.all_scopes[7]])
-        expect(access_token).to be_valid
+      context do
+        let(:scopes) { [TokenScopes.all_scopes[8], TokenScopes.all_scopes[7]] }
+
+        it 'is valid when scopes requested are included on dev key' do
+          expect(access_token).to be_valid
+        end
+      end
+
+      context 'with bad scopes' do
+        let(:scopes) { ['bad/scope'] }
+
+        it 'is invalid' do
+          expect(access_token).not_to be_valid
+        end
+
+        context 'with require_scopes off' do
+          before do
+            dev_key.update! require_scopes: false
+          end
+
+          it 'is valid' do
+            expect(access_token).to be_valid
+          end
+        end
       end
     end
   end
@@ -458,14 +482,69 @@ describe AccessToken do
   end
 
   describe "#dev_key_account_id" do
-
     it "returns the developer_key account_id" do
       account = Account.create!
       dev_key = DeveloperKey.create!(account: account)
       at = AccessToken.create!(developer_key: dev_key)
       expect(at.dev_key_account_id).to eq account.id
     end
-
   end
 
+  context 'broadcast policy' do
+    before(:once) do
+      Notification.create!(name: 'Manually Created Access Token Created')
+      user_model
+    end
+
+    it 'should send a notification when a new manually created access token is created' do
+      access_token = AccessToken.create!(user: @user)
+      expect(access_token.messages_sent).to include('Manually Created Access Token Created')
+    end
+
+    it 'should send a notification when a manually created access token is regenerated' do
+      AccessToken.create!(user: @user)
+      access_token = AccessToken.last
+      access_token.regenerate_access_token
+      expect(access_token.messages_sent).to include('Manually Created Access Token Created')
+    end
+
+    it 'should not send a notification when a manually created access token is touched' do
+      AccessToken.create!(user: @user)
+      access_token = AccessToken.last
+      access_token.touch
+      expect(access_token.messages_sent).not_to include('Manually Created Access Token Created')
+    end
+
+    it 'should not send a notification when a new non-manually created access token is created' do
+      developer_key = DeveloperKey.create!
+      access_token = AccessToken.create!(user: @user, developer_key: developer_key)
+      expect(access_token.messages_sent).not_to include('Manually Created Access Token Created')
+    end
+  end
+
+  describe 'root_account_id' do
+    let(:root_account) { account_model }
+    let(:sub_account) { root_account.sub_accounts.create! name: 'sub' }
+    let(:root_account_key) { DeveloperKey.create!(account: root_account) }
+    let(:site_admin_key) { DeveloperKey.create! }
+
+    it "uses root_account value from developer key association" do
+      at = AccessToken.create!(user: user_model, developer_key: root_account_key)
+      expect(at.root_account_id).to eq(root_account_key.root_account_id)
+    end
+
+    it "inherits root_account value from siteadmin context" do
+      at = AccessToken.create!(user: user_model, developer_key: site_admin_key)
+      expect(at.root_account_id).to eq Account.site_admin.id
+    end
+
+    it "keeps set value if it already exists" do
+      at = AccessToken.create!(
+        user: user_model,
+        developer_key: root_account_key,
+        root_account_id: sub_account.id
+      )
+      expect(at.root_account_id).to eq(sub_account.id)
+    end
+  end
 end

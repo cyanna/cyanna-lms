@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -17,44 +18,57 @@
 #
 
 module Types
-  AssignmentOverrideSetUnion = GraphQL::UnionType.define do
-    name "AssignmentOverrideSet"
-
-    description "Objects that can be assigned overridden dates"
-
-    possible_types [SectionType, GroupType, AdhocStudentsType]
-
-    resolve_type ->(obj, _) {
-      case obj
-      when CourseSection then SectionType
-      when Group then GroupType
-      when AssignmentOverride then AdhocStudentsType
-      end
-    }
-  end
-
-  AdhocStudentsType = GraphQL::ObjectType.define do
-    name "AdhocStudents"
+  class AdhocStudentsType < ApplicationObjectType
+    graphql_name "AdhocStudents"
 
     description "A list of students that an `AssignmentOverride` applies to"
 
-    field :students, types[UserType], resolve: ->(override, _, _) {
-      Loaders::AssociationLoader.for(AssignmentOverride,
-                                     assignment_override_students: :user)
-      .load(override)
-      .then { override.assignment_override_students.map(&:user) }
-    }
+    alias override object
 
+    field :students, [UserType], null: true
+
+    def students
+      load_association(:assignment_override_students).then do |override_students|
+        Loaders::AssociationLoader.for(AssignmentOverrideStudent, :user).load_many(override_students)
+      end
+    end
   end
+
+  Noop = Struct.new(:id)
+
+  class NoopType < ApplicationObjectType
+    graphql_name "Noop"
+
+    description "A descriptive tag that doesn't link the assignment to a set"
+
+    field :_id, ID, method: :id, null: false
+  end
+
+  class AssignmentOverrideSetUnion < BaseUnion
+    graphql_name "AssignmentOverrideSet"
+
+    description "Objects that can be assigned overridden dates"
+
+    possible_types SectionType, GroupType, AdhocStudentsType, NoopType
+
+    def self.resolve_type(obj, _)
+      case obj
+      when CourseSection then SectionType
+      when Group then GroupType
+      when Noop then NoopType
+      when AssignmentOverride then AdhocStudentsType
+      end
+    end
+  end
+
   class AssignmentOverrideType < ApplicationObjectType
     graphql_name "AssignmentOverride"
 
     implements GraphQL::Types::Relay::Node
     implements Interfaces::TimestampInterface
+    implements Interfaces::LegacyIDInterface
 
     alias :override :object
-
-    field :_id, ID, "legacy canvas id", method: :id, null: false
 
     field :assignment, AssignmentType, null: true
     def assignment
@@ -69,6 +83,8 @@ module Types
     def set
       if override.set_type == "ADHOC"
         override
+      elsif override.set_type == 'Noop'
+        Noop.new(override.set_id)
       else
         load_association(:set)
       end

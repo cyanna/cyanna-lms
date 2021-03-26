@@ -1,0 +1,1 @@
+../../../../../client_apps/canvas_quizzes/dist/canvas_quizzes/apps/events.js

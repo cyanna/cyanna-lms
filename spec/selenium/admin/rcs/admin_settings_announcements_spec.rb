@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -17,7 +19,7 @@
 
 require_relative '../../common'
 
-describe "settings tabs" do
+describe "settings tabs", ignore_js_errors: true do
   context "announcements tab" do
     include_context "in-process server selenium tests"
 
@@ -35,7 +37,6 @@ describe "settings tabs" do
       ff("#add_notification_form .ui-datepicker-trigger")[1].click
       f(".ui-datepicker-next").click
       fln("15").click
-
       type_in_tiny "textarea", "this is a message"
       yield if block_given?
       submit_form("#add_notification_form")
@@ -46,7 +47,7 @@ describe "settings tabs" do
       expect(notification.start_at.day).to eq 1
       expect(notification.end_at.day).to eq 15
       expect(f("#tab-announcements .announcement-details")).to include_text(displayed_username)
-      dismiss_flash_messages
+      dismiss_flash_messages_if_present
 
       # close the "user account" Tray that opened so we could read the displayed username
       f('body').click
@@ -59,7 +60,7 @@ describe "settings tabs" do
     def edit_announcement(notification)
       f("#notification_edit_#{notification.id}").click
       replace_content f("#account_notification_subject_#{notification.id}"), "edited subject"
-      f("#account_notification_icon .warning").click
+      f("#account_notification_icon_#{notification.id} .warning").click
       textarea_selector = "textarea#account_notification_message_#{notification.id}"
       type_in_tiny(textarea_selector, "edited message", clear: true)
 
@@ -75,9 +76,8 @@ describe "settings tabs" do
 
     before do
       course_with_admin_logged_in
-      enable_all_rcs @course.account
+      Account.default.enable_feature!(:rce_enhancements)
       stub_rcs_config
-      make_full_screen
     end
 
     it "should add and delete an announcement" do

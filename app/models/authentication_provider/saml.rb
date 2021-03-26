@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -24,14 +26,7 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
   end
 
   def self.enabled?(_account = nil)
-    @enabled
-  end
-
-  begin
-    require 'onelogin/saml'
-    @enabled = true
-  rescue LoadError
-    @enabled = false
+    true
   end
 
   def self.recognized_params
@@ -62,7 +57,7 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
   end
 
   def self.supports_debugging?
-    true
+    debugging_enabled?
   end
 
   def self.debugging_sections
@@ -84,7 +79,6 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
      }, {
       idp_in_response_to: -> { t("IdP InResponseTo") },
       idp_login_destination: -> { t("IdP LoginResponse destination") },
-      fingerprint_from_idp: -> { t("IdP certificate fingerprint") },
       is_valid_login_response: -> { t("Canvas thinks response is valid") },
       login_response_validation_error: -> { t("Validation Error") },
       login_to_canvas_success: -> { t("User succesfully logged into Canvas") },
@@ -111,7 +105,20 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
   before_validation :download_metadata
   after_initialize do |ap|
     # default to the most secure signature we support, but only for new objects
-    ap.sig_alg ||= 'RSA-SHA256' if ap.new_record?
+    if ap.new_record?
+      ap.sig_alg ||= 'RSA-SHA256' 
+      ap.identifier_format ||= SAML2::NameID::Format::UNSPECIFIED
+    end
+  end
+
+  def destroy
+    super
+    if account.settings[:saml_entity_id] &&
+      !account.authentication_providers.active.where(auth_type: 'saml').exists?
+      account.settings.delete(:saml_entity_id)
+      account.save!
+    end
+    true
   end
 
   def auth_provider_filter
@@ -119,7 +126,7 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
   end
 
   def entity_id
-    self.class.saml_default_entity_id_for_account(self.account)
+    self.class.saml_default_entity_id_for_account(self.account, persist: !new_record?)
   end
 
   def set_saml_defaults
@@ -171,9 +178,11 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
     }
   end
 
-  def self.saml_default_entity_id_for_account(account)
+  def self.saml_default_entity_id_for_account(account, persist: true)
     unless account.settings[:saml_entity_id]
-      account.settings[:saml_entity_id] = "http://#{HostUrl.context_host(account)}/saml2"
+      new_entity_id = "http://#{HostUrl.context_host(account)}/saml2"
+      return new_entity_id unless persist
+      account.settings[:saml_entity_id] = new_entity_id
       account.save!
     end
     account.settings[:saml_entity_id]
@@ -223,6 +232,10 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
     settings['sig_alg'] = value
   end
 
+  def self.name_id_formats
+    SAML2::NameID::Format.constants.map { |const| SAML2::NameID::Format.const_get(const, false) }.sort_by(&:downcase)
+  end
+
   def populate_from_metadata(entity)
     idps = entity.identity_providers
     raise "Must provide exactly one IDPSSODescriptor; found #{idps.length}" unless idps.length == 1
@@ -231,7 +244,15 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
     self.log_in_url = idp.single_sign_on_services.find { |ep| ep.binding == SAML2::Bindings::HTTPRedirect::URN }.try(:location)
     self.log_out_url = idp.single_logout_services.find { |ep| ep.binding == SAML2::Bindings::HTTPRedirect::URN }.try(:location)
     self.certificate_fingerprint = idp.signing_keys.map(&:fingerprint).join(' ').presence || idp.keys.first&.fingerprint
-    self.identifier_format = (idp.name_id_formats & Onelogin::Saml::NameIdentifiers::ALL_IDENTIFIERS).first
+
+    recognized_formats = (idp.name_id_formats & self.class.name_id_formats)
+    if recognized_formats.length == 1
+      self.identifier_format = recognized_formats.first
+    elsif identifier_format != SAML2::NameID::Format::UNSPECIFIED &&
+      !recognized_formats.include?(identifier_format)
+      self.identifier_format = SAML2::NameID::Format::UNSPECIFIED
+    end
+
     self.settings[:signing_certificates] = idp.signing_keys.map(&:x509)
     case idp.want_authn_requests_signed?
     when true
@@ -247,7 +268,7 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
 
   def populate_from_metadata_xml(xml)
     entity = SAML2::Entity.parse(xml)
-    raise "Invalid schema" unless entity.valid_schema?
+    raise "Invalid schema" unless entity&.valid_schema?
     if entity.is_a?(SAML2::Entity::Group) && idp_entity_id.present?
       entity = entity.find { |e| e.entity_id == idp_entity_id }
     end
@@ -266,23 +287,6 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
     end
   end
 
-  def saml_settings(current_host=nil)
-    return nil unless self.auth_type == 'saml'
-
-    unless @saml_settings
-      @saml_settings = self.class.onelogin_saml_settings_for_account(self.account, current_host)
-
-      @saml_settings.idp_sso_target_url = self.log_in_url
-      @saml_settings.idp_slo_target_url = self.log_out_url
-      @saml_settings.idp_cert_fingerprint = (certificate_fingerprint || '').split.presence
-      @saml_settings.name_identifier_format = self.identifier_format
-      @saml_settings.requested_authn_context = self.requested_authn_context
-      @saml_settings.logger = logger
-    end
-
-    @saml_settings
-  end
-
   # construct a metadata doc to represent the IdP
   # TODO: eventually store the actual metadata we got from the IdP
   def idp_metadata
@@ -297,13 +301,16 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
          idp.single_logout_services << SAML2::Endpoint.new(log_out_url,
                                                            SAML2::Bindings::HTTPRedirect::URN)
        end
-       idp.fingerprints = (certificate_fingerprint || '').split.presence
+       idp.fingerprints = (certificate_fingerprint || '').split
+       Array.wrap(settings['signing_certificates']).each do |cert|
+         idp.keys << SAML2::KeyDescriptor.new(cert, SAML2::KeyDescriptor::Type::SIGNING)
+       end
        entity.roles << idp
        entity
     end
   end
 
-  def self.sp_metadata(entity_id, hosts)
+  def self.sp_metadata(entity_id, hosts, include_all_encryption_certificates: true)
     app_config = config
 
     entity = SAML2::Entity.new
@@ -317,6 +324,8 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
     sp = SAML2::ServiceProvider.new
     sp.single_logout_services << SAML2::Endpoint.new("#{HostUrl.protocol}://#{hosts.first}/login/saml/logout",
                                                      SAML2::Bindings::HTTPRedirect::URN)
+    sp.single_logout_services << SAML2::Endpoint.new("#{HostUrl.protocol}://#{hosts.first}/login/saml/logout",
+                                                     SAML2::Bindings::HTTP_POST::URN)
 
     hosts.each_with_index do |host, i|
       sp.assertion_consumer_services << SAML2::Endpoint::Indexed.new("#{HostUrl.protocol}://#{host}/login/saml",
@@ -327,13 +336,24 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
     encryption = app_config[:encryption]
 
     if encryption.is_a?(Hash)
+      first_cert = true
       Array.wrap(encryption[:certificate]).each do |path|
         cert_path = resolve_saml_key_path(path)
         next unless cert_path
 
         cert = File.read(cert_path)
-        sp.keys << SAML2::Key.new(cert, SAML2::Key::Type::ENCRYPTION, [SAML2::Key::EncryptionMethod.new])
+        sp.keys << SAML2::Key.new(cert, SAML2::Key::Type::ENCRYPTION, [SAML2::Key::EncryptionMethod.new]) if first_cert || include_all_encryption_certificates
+        first_cert = false
         sp.keys << SAML2::Key.new(cert, SAML2::Key::Type::SIGNING)
+      end
+      if include_all_encryption_certificates
+        Array.wrap(encryption[:additional_certificates]).each do |path|
+          cert_path = resolve_saml_key_path(path)
+          next unless cert_path
+
+          cert = File.read(cert_path)
+          sp.keys << SAML2::Key.new(cert, SAML2::Key::Type::ENCRYPTION, [SAML2::Key::EncryptionMethod.new])
+        end
       end
     end
     sp.private_keys = private_keys.values.map { |key| OpenSSL::PKey::RSA.new(key) }
@@ -372,10 +392,13 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
     forward_url
   end
 
-  def self.sp_metadata_for_account(account, current_host = nil)
-    entity = sp_metadata(saml_default_entity_id_for_account(account),HostUrl.context_hosts(account, current_host))
+  def self.sp_metadata_for_account(account, current_host = nil, include_all_encryption_certificates: true)
+    aps = account.authentication_providers.active.where(auth_type: 'saml').to_a
+    entity = sp_metadata(saml_default_entity_id_for_account(account, persist: aps.length != 0),
+                         HostUrl.context_hosts(account, current_host),
+                         include_all_encryption_certificates: include_all_encryption_certificates)
     prior_configs = Set.new
-    account.authentication_providers.active.where(auth_type: 'saml').each do |ap|
+    aps.each do |ap|
       federated_attributes = ap.federated_attributes
       next if federated_attributes.empty?
       next if prior_configs.include?(federated_attributes)
@@ -418,33 +441,6 @@ class AuthenticationProvider::SAML < AuthenticationProvider::Delegated
 
   ::Canvas::Reloader.on_reload do
     remove_instance_variable(:@key) if instance_variable_defined?(:@key)
-  end
-
-  def self.onelogin_saml_settings_for_account(account, current_host=nil)
-    app_config = ConfigFile.load('saml') || {}
-    domains = HostUrl.context_hosts(account, current_host)
-
-    settings = Onelogin::Saml::Settings.new
-    settings.sp_slo_url = "#{HostUrl.protocol}://#{domains.first}/login/saml/logout"
-    settings.assertion_consumer_service_url = domains.flat_map do |domain|
-      [
-        "#{HostUrl.protocol}://#{domain}/login/saml"
-      ]
-    end
-    settings.tech_contact_name = app_config[:tech_contact_name] || 'Webmaster'
-    settings.tech_contact_email = app_config[:tech_contact_email] || ''
-
-    settings.issuer = saml_default_entity_id_for_account(account)
-
-    encryption = app_config[:encryption]
-    if encryption.is_a?(Hash)
-      settings.xmlsec_certificate = resolve_saml_key_path(Array.wrap(encryption[:certificate]).first)
-      settings.xmlsec_privatekey = resolve_saml_key_path(encryption[:private_key])
-
-      settings.xmlsec_additional_privatekeys = Array(encryption[:additional_private_keys]).map { |apk| resolve_saml_key_path(apk) }.compact
-    end
-
-    settings
   end
 
   def self.resolve_saml_key_path(path)

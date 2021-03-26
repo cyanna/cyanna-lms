@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2016 - present Instructure, Inc.
 #
@@ -51,12 +53,12 @@ describe NotificationFailureProcessor do
 
       failure_queue = mock_queue([
         {
-          global_id: messages[0].id,
+          global_id: messages[0].notification_service_id,
           error_context: nil,
           error: 'Error from mail system'
         },
         {
-          global_id: messages[1].id,
+          global_id: messages[1].notification_service_id,
           error_context: nil,
           error: 'Error from SNS system'
         }
@@ -99,7 +101,7 @@ describe NotificationFailureProcessor do
 
       failure_queue = mock_queue([
         {
-          global_id: @message.id,
+          global_id: @message.notification_service_id,
           error_context: bad_arn,
           error: 'EndpointDisabled: Endpoint is disabled'
         },
@@ -174,7 +176,7 @@ describe NotificationFailureProcessor do
         message.save!
         failure_queue = mock_queue([
           {
-            global_id: message.global_id,
+            global_id: message.notification_service_id,
             error_context: nil,
             error: 'Error from mail system'
           }

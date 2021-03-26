@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -25,7 +27,6 @@ describe "student planner" do
   include PlannerPageObject
 
   before :once do
-    Account.default.enable_feature!(:student_planner)
     course_with_teacher(active_all: true, new_user: true, user_name: 'PlannerTeacher', course_name: 'Planner Course')
     @student1 = User.create!(name: 'Student 1')
     @course.enroll_student(@student1).accept!
@@ -45,7 +46,7 @@ describe "student planner" do
     switch_to_dashcard_view
 
     expect(dashboard_card_container).to contain_css("[aria-label='#{@course.name}']")
-    expect(dashboard_card_header_content).to contain_css("h2[title='#{@course.name}']")
+    expect(dashboard_card_header_content).to contain_css("h3[title='#{@course.name}']")
   end
 
   it "shows and navigates to announcements page from student planner", priority: "1", test_id: 3259302 do
@@ -85,7 +86,7 @@ describe "student planner" do
 
   context "responsive layout" do
     it "changes layout on browser resize" do
-      resize_screen_to_normal
+
       go_to_list_view
 
       expect(f('.large.ic-Dashboard-header__layout')).to be_present
@@ -99,7 +100,7 @@ describe "student planner" do
       driver.manage.window.resize_to(500, dimension.height)
       expect(f('.small.ic-Dashboard-header__layout')).to be_present
       expect(f('.small.PlannerApp')).to be_present
-      resize_screen_to_normal
+
     end
   end
 
@@ -112,12 +113,12 @@ describe "student planner" do
       get "/courses/#{@course.id}/pages/"
       wait_for_ajaximations
       expect(f('a[data-sort-field="todo_date"]')).to be_displayed
-      expect(f('tbody.collectionViewItems')).to include_text(format_time_for_view(@wiki_page.todo_date))
+      expect(f('tbody.collectionViewItems')).to include_text(format_time_for_view(@wiki_page.todo_date, :short))
     end
 
     it 'shows the date in the show page' do
       get "/courses/#{@course.id}/pages/#{@wiki_page.id}/"
-      expect(f('.show-content')).to include_text(format_time_for_view(@wiki_page.todo_date))
+      expect(f('.show-content')).to include_text(format_time_for_view(@wiki_page.todo_date, :short))
     end
   end
 
@@ -175,8 +176,9 @@ describe "student planner" do
       go_to_list_view
 
       validate_object_displayed(@course.name,'Peer Review')
-      expect(list_view_planner_items.second).to contain_css(peer_review_icon_selector)
-      expect(list_view_planner_items.second).to contain_jqcss(peer_review_reminder_selector)
+      expect(list_view_planner_item("Planner Course Peer Review")).to contain_css(peer_review_icon_selector)
+      expect(list_view_planner_item("Planner Course Peer Review")).to contain_jqcss(peer_review_reminder_selector)
+      expect(list_view_planner_item("Planner Course Assignment")).not_to contain_css(peer_review_icon_selector)
     end
 
     it "navigates to peer review submission when clicked" do
@@ -201,7 +203,7 @@ describe "student planner" do
       user_session(@student1)
     end
 
-    it "opens the sidebar to creata a new To-Do item.", priority: "1", test_id: 3263157 do
+    it "opens the sidebar to create a new To-Do item.", priority: "1", test_id: 3263157 do
       go_to_list_view
       todo_modal_button.click
       expect(todo_save_button).to be_displayed
@@ -392,7 +394,7 @@ describe "student planner" do
       view_todo_item
       modal = todo_sidebar_modal(@student_to_do.title)
       title_input = f('input', modal)
-      course_name_dropdown = fj('span:contains("Course")>span>span>span>input', modal)
+      course_name_dropdown = f('#to-do-item-course-select', modal)
 
       expect(title_input[:value]).to eq(@student_to_do.title)
       expect(course_name_dropdown[:value]).to eq("#{@course.name} - #{@course.short_name}")
@@ -478,32 +480,6 @@ describe "student planner" do
     end
   end
 
-  context "History" do
-    before :once do
-      quiz = quiz_model(course: @course)
-      quiz.generate_quiz_data
-      quiz.due_at = Time.zone.now + 2.days
-      quiz.save!
-      Array.new(12){|n| n}.each do |i|
-        @course.wiki_pages.create!(title: "Page#{i}", todo_date: Time.zone.now + (i-4).days)
-        @course.assignments.create!(name: "assignment#{i}",
-                                    due_at: Time.zone.now.advance(days:(i-4)))
-        @course.discussion_topics.create!(user: @teacher, title: "topic#{i}",
-                                          message: "somebody topic message ##{i}",
-                                          todo_date: Time.zone.now + (i-4).days)
-      end
-    end
-
-    it "loads future items at the bottom of the page", priority: "1", test_id: 3263149 do
-      go_to_list_view
-      current_items = items_displayed.count
-      load_more_button.click
-      wait_for_spinner
-
-      expect(items_displayed.count).to be > current_items
-    end
-  end
-
   context "with new activity button" do
     before :once do
       @old, @older, @oldest = new_activities_in_the_past
@@ -570,10 +546,26 @@ describe "student planner" do
         f('#student_planner_checkbox').click
         wait_for_ajaximations
         f('input[name="student_todo_at"]').send_keys(format_date_for_view(Time.zone.now).to_s)
-        fj('button:contains("Save")').click
+        expect_new_page_load{fj('button:contains("Save")').click}
         get("/courses/#{@course.id}/pages/#{@wiki.id}/edit")
         expect(get_value('input[name="student_todo_at"]')).to eq "#{format_date_for_view(Time.zone.today)} 11:59pm"
       end
+    end
+
+    it "allows account admins with content management rights to add todo dates" do
+      @wiki = @course.wiki_pages.create!(title: 'Default Time Wiki Page')
+      admin = account_admin_user_with_role_changes(:role_changes => {:manage_courses => false})
+      user_session(admin)
+
+      expect(@course.grants_right?(admin, :manage)).to eq false # sanity check
+      expect(@course.grants_right?(admin, :manage_content)).to eq true
+
+      get("/courses/#{@course.id}/pages/#{@wiki.id}/edit")
+      f('#student_planner_checkbox').click
+      wait_for_ajaximations
+      f('input[name="student_todo_at"]').send_keys(format_date_for_view(Time.zone.now).to_s)
+      expect_new_page_load{fj('button:contains("Save")').click}
+      expect(@wiki.reload.todo_date).to be_present
     end
 
     it "shows correct default time in an ungraded discussion" do

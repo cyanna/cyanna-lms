@@ -19,7 +19,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom'
 import TestUtils from 'react-dom/test-utils'
-import moxios from 'moxios';
+import moxios from 'moxios'
 import MessageStudents from 'jsx/shared/MessageStudents'
 
 let $domNode, subject, fixtures
@@ -33,20 +33,21 @@ const renderComponent = props => {
 QUnit.module('MessageStudents', hooks => {
   hooks.beforeEach(() => {
     fixtures = document.getElementById('fixtures')
-    moxios.install();
+    moxios.install()
   })
   hooks.afterEach(() => {
     ReactDOM.unmountComponentAtNode($domNode)
     $domNode = null
     subject = null
     fixtures.innerHTML = ''
-    moxios.uninstall();
+    moxios.uninstall()
   })
 
   test('it renders', () => {
     subject = renderComponent({
       contextCode: 'course_1',
-      title: 'Send a message'
+      title: 'Send a message',
+      onRequestClose: () => {}
     })
     ok(subject)
   })
@@ -56,9 +57,13 @@ QUnit.module('MessageStudents', hooks => {
       subject = renderComponent({
         title: 'Send a message',
         contextCode: 'course_1',
-        recipients: [{
-          id: 1, email: 'some@one.com'
-        }]
+        recipients: [
+          {
+            id: 1,
+            email: 'some@one.com'
+          }
+        ],
+        onRequestClose: () => {}
       })
 
       const requestData = subject.composeRequestData()
@@ -94,9 +99,13 @@ QUnit.module('MessageStudents', hooks => {
         contextCode: 'course_1',
         subject: 'Here is a subject',
         body: 'Here is a body',
-        recipients: [{
-          id: 1, email: 'some@one.com'
-        }]
+        recipients: [
+          {
+            id: 1,
+            email: 'some@one.com'
+          }
+        ],
+        onRequestClose: () => {}
       })
       data = subject.composeRequestData()
       sinon.spy(subject, 'handleResponseSuccess')
@@ -142,9 +151,7 @@ QUnit.module('MessageStudents', hooks => {
       hooks.beforeEach(() => {
         moxios.stubRequest('/api/v1/conversations', {
           status: 500,
-          response: [
-            { attribute: 'fake', message: 'error' }
-          ]
+          response: [{attribute: 'fake', message: 'error'}]
         })
       })
 
@@ -165,7 +172,8 @@ QUnit.module('MessageStudents', hooks => {
     hooks.beforeEach(() => {
       subject = renderComponent({
         contextCode: 'course_1',
-        title: 'Send a message'
+        title: 'Send a message',
+        onRequestClose: () => {}
       })
     })
 
@@ -200,7 +208,8 @@ QUnit.module('MessageStudents', hooks => {
     hooks.beforeEach(() => {
       subject = renderComponent({
         contextCode: 'course_1',
-        title: 'Send a message'
+        title: 'Send a message',
+        onRequestClose: () => {}
       })
       subject.setState({
         errors: {
@@ -226,7 +235,8 @@ QUnit.module('MessageStudents', hooks => {
     hooks.beforeEach(() => {
       subject = renderComponent({
         contextCode: 'course_1',
-        title: 'Send a message'
+        title: 'Send a message',
+        onRequestClose: () => {}
       })
     })
 
@@ -257,7 +267,8 @@ QUnit.module('MessageStudents', hooks => {
     hooks.beforeEach(() => {
       subject = renderComponent({
         contextCode: 'course_1',
-        title: 'Send a message'
+        title: 'Send a message',
+        onRequestClose: () => {}
       })
       const buttons = document.querySelectorAll('button')
       closeButton = buttons[buttons.length - 2]
@@ -277,9 +288,13 @@ QUnit.module('MessageStudents', hooks => {
       subject = renderComponent({
         title: 'Send a message',
         contextCode: 'course_1',
-        recipients: [{
-          id: 1, email: 'some@one.com'
-        }]
+        recipients: [
+          {
+            id: 1,
+            email: 'some@one.com'
+          }
+        ],
+        onRequestClose: () => {}
       })
       sinon.spy(subject, 'sendMessage')
 
@@ -297,11 +312,7 @@ QUnit.module('MessageStudents', hooks => {
     })
 
     test('sets state errors based on validationErrors', () => {
-      strictEqual(
-        subject.state.data.subject.length,
-        0,
-        'precondition, subject is blank'
-      )
+      strictEqual(subject.state.data.subject.length, 0, 'precondition, subject is blank')
       notOk(
         Object.keys(subject.state.errors).includes('subject'),
         'precondition, no errors on subject'
@@ -349,9 +360,13 @@ QUnit.module('MessageStudents', hooks => {
         contextCode: 'course_1',
         subject: 'Here is a subject',
         body: 'Here is a body',
-        recipients: [{
-          id: 1, email: 'some@one.com'
-        }]
+        recipients: [
+          {
+            id: 1,
+            email: 'some@one.com'
+          }
+        ],
+        onRequestClose: () => {}
       })
       subject.setState({
         hideAlert: true,
@@ -391,19 +406,25 @@ QUnit.module('MessageStudents', hooks => {
     hooks.beforeEach(() => {
       errorResponse = {
         response: {
-          data: [{
-            attribute: 'subject', message: 'blank'
-          }]
+          data: [
+            {
+              attribute: 'subject',
+              message: 'blank'
+            }
+          ]
         }
       }
 
       subject = renderComponent({
         title: 'Send a message',
         contextCode: 'course_1',
-        recipients: [{
-          id: 1,
-          email: 'some@one.com'
-        }]
+        recipients: [
+          {
+            id: 1,
+            email: 'some@one.com'
+          }
+        ],
+        onRequestClose: () => {}
       })
       subject.setState({sending: true})
     })
@@ -433,9 +454,13 @@ QUnit.module('MessageStudents', hooks => {
       subject = renderComponent({
         title: 'Send a message',
         contextCode: 'course_1',
-        recipients: [{
-          id: 1, email: 'some@one.com'
-        }]
+        recipients: [
+          {
+            id: 1,
+            email: 'some@one.com'
+          }
+        ],
+        onRequestClose: () => {}
       })
     })
 

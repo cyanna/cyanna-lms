@@ -16,32 +16,35 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-import $ from 'jquery'
-
+import AlertManager from '../shared/components/AlertManager'
+import {ApolloProvider, createClient} from '../canvas-apollo'
+import ErrorBoundary from '../shared/components/ErrorBoundary'
+import errorShipUrl from 'jsx/shared/svg/ErrorShip.svg'
+import GenericErrorPage from '../shared/components/GenericErrorPage/index'
 import React from 'react'
 import ReactDOM from 'react-dom'
-import ApolloClient from 'apollo-boost'
-import {ApolloProvider} from 'react-apollo'
+import StudentViewQuery from './student/components/StudentViewQuery'
 
-import StudentView from './student/StudentView'
-
-const apolloClient = new ApolloClient({
-  uri: '/api/graphql',
-  request: operation => {
-    operation.setContext({
-      headers: {
-        'X-Requested-With': 'XMLHttpRequest',
-        'GraphQL-Metrics': true,
-        'X-CSRF-Token': $.cookie('_csrf_token')
-      }
-    })
-  }
-})
+const client = createClient()
 
 export default function renderAssignmentsApp(env, elt) {
   ReactDOM.render(
-    <ApolloProvider client={apolloClient}>
-      <StudentView assignmentLid={ENV.ASSIGNMENT_ID.toString()} />
+    <ApolloProvider client={client}>
+      <ErrorBoundary
+        errorComponent={
+          <GenericErrorPage
+            imageUrl={errorShipUrl}
+            errorCategory="Assignments 2 Student Error Page"
+          />
+        }
+      >
+        <AlertManager>
+          <StudentViewQuery
+            assignmentLid={ENV.ASSIGNMENT_ID.toString()}
+            submissionID={ENV.SUBMISSION_ID?.toString()}
+          />
+        </AlertManager>
+      </ErrorBoundary>
     </ApolloProvider>,
     elt
   )

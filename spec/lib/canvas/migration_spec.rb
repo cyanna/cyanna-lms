@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -77,7 +79,7 @@ describe "Migration package importers" do
       archive = Canvas::Migration::Archive.new(settings)
       expect{
         Canvas::Migration::PackageIdentifier.new(archive).identify_package
-      }.to raise_error(Canvas::Migration::Error, "Error identifying package type: unknown mime type text/plain")
+      }.to raise_error(Canvas::Migration::Error, "Error identifying package type: unknown mime type text/plain for archive invalid.zip")
     end
   end
 

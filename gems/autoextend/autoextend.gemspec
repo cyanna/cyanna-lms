@@ -13,10 +13,9 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
   spec.test_files    = spec.files.grep(%r{^spec/})
 
-  spec.required_ruby_version = '~> 2.0'
+  spec.required_ruby_version = '>= 2.0'
 
   spec.add_development_dependency "byebug"
-  spec.add_development_dependency "minitest"
-  spec.add_development_dependency "rake"
   spec.add_development_dependency "activesupport"
+  spec.add_development_dependency "rspec", "~> 3.5.0"
 end

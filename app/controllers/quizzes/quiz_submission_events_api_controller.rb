@@ -43,8 +43,8 @@ class Quizzes::QuizSubmissionEventsApiController < ApplicationController
   include ::Filters::Quizzes
   include ::Filters::QuizSubmissions
 
-  before_action :require_user,
-    :require_context,
+  before_action :require_user, only: [:index]
+  before_action :require_context,
     :require_quiz,
     :require_active_quiz_submission
 
@@ -75,7 +75,7 @@ class Quizzes::QuizSubmissionEventsApiController < ApplicationController
   #
   def create
     if authorized_action(@quiz_submission, @current_user, :record_events)
-      params["quiz_submission_events"].each do |datum|
+      params["quiz_submission_events"]&.each do |datum|
         Quizzes::QuizSubmissionEvent.create do |event|
           event.quiz_submission_id = @quiz_submission.id
           event.event_type = datum["event_type"]

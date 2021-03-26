@@ -1,3 +1,5 @@
---format documentation
 --color
 --require spec_helper
+--format doc
+--format html
+--out ../../tmp/spec_results/lti-advantage_results.html

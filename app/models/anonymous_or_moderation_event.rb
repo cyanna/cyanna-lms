@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -64,9 +66,11 @@ class AnonymousOrModerationEvent < ApplicationRecord
   SUBMISSION_ID_REQUIRED_EVENT_TYPES = (EVENT_TYPES - SUBMISSION_ID_EXCLUDED_EVENT_TYPES).freeze
 
   belongs_to :assignment
-  belongs_to :user
+  belongs_to :user, optional: true
   belongs_to :submission
   belongs_to :canvadoc
+  belongs_to :quiz, class_name: "Quizzes::Quiz", optional: true
+  belongs_to :context_external_tool, optional: true
 
   validates :assignment_id, presence: true
   validates :submission_id, presence: true, if: ->(event) {
@@ -75,10 +79,11 @@ class AnonymousOrModerationEvent < ApplicationRecord
   validates :submission_id, absence: true, unless: -> (event) {
     SUBMISSION_ID_REQUIRED_EVENT_TYPES.include?(event.event_type)
   }
-  validates :user_id, presence: true
   validates :event_type, presence: true
   validates :event_type, inclusion: EVENT_TYPES
   validates :payload, presence: true
+
+  validate :event_perpetrator
 
   with_options if: ->(e) { e.event_type == "assignment_created" } do
     validates :canvadoc_id, absence: true
@@ -120,6 +125,15 @@ class AnonymousOrModerationEvent < ApplicationRecord
       if payload[key].blank?
         errors.add(:payload, "#{key} can't be blank")
       end
+    end
+  end
+
+  def event_perpetrator
+    id_count = [user_id, context_external_tool_id, quiz_id].compact.length
+    if id_count > 1
+      errors.add(:base, "may not have multiple perpetrator associations")
+    elsif id_count < 1
+      errors.add(:base, "must have one perpetrator association")
     end
   end
 end

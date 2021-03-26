@@ -15,84 +15,117 @@
  * You should have received a copy of the GNU Affero General Public License along
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-import React from 'react'
-import ReactDOM from 'react-dom'
-import $ from 'jquery'
 
 import AssignmentGroupModuleNav from '../AssignmentGroupModuleNav'
+import {mockAssignment} from '../../mocks'
+import React from 'react'
+import {render} from '@testing-library/react'
 
-beforeAll(() => {
-  const found = document.getElementById('fixtures')
-  if (!found) {
-    const fixtures = document.createElement('div')
-    fixtures.setAttribute('id', 'fixtures')
-    document.body.appendChild(fixtures)
-  }
-})
+describe('AssignmentGroupModuleNav', () => {
+  it('renders module and assignment group links correctly', async () => {
+    const assignment = await mockAssignment({
+      Assignment: {modules: [{}]}
+    })
+    const {container, getByTestId} = render(<AssignmentGroupModuleNav assignment={assignment} />)
 
-afterEach(() => {
-  ReactDOM.unmountComponentAtNode(document.getElementById('fixtures'))
-})
+    const moduleLink = getByTestId('module-link')
+    const assignmentGroupLink = getByTestId('assignmentgroup-link')
 
-it('renders module and assignment group links correctly', () => {
-  ReactDOM.render(
-    <AssignmentGroupModuleNav
-      module={{name: 'Test Module', link: 'testmodulelink'}}
-      assignmentGroup={{name: 'Test assignmentGroup', link: 'testassignmentgrouplink'}}
-    />,
-    document.getElementById('fixtures')
-  )
-  const moduleLink = $('[data-test-id="module-link"]')
-  const assignmentGroupLink = $('[data-test-id="assignmentgroup-link"]')
-  expect(moduleLink.attr('href')).toEqual('testmodulelink')
-  expect(assignmentGroupLink.attr('href')).toEqual('testassignmentgrouplink')
-})
+    expect(moduleLink).toContainElement(container.querySelector('a[href="mocked-module-url"]'))
+    expect(assignmentGroupLink).toContainElement(
+      container.querySelector('a[href="mocked-assignment-url"]')
+    )
+  })
 
-it('renders module and assignment group text correctly', () => {
-  ReactDOM.render(
-    <AssignmentGroupModuleNav
-      module={{name: 'Test Module', link: 'testmodulelink'}}
-      assignmentGroup={{name: 'Test assignmentGroup', link: 'testassignmentgrouplink'}}
-    />,
-    document.getElementById('fixtures')
-  )
-  const moduleLink = $('[data-test-id="module-link"]')
-  const assignmentGroupLink = $('[data-test-id="assignmentgroup-link"]')
-  expect(moduleLink.text()).toEqual('Test Module')
-  expect(assignmentGroupLink.text()).toEqual('Test assignmentGroup')
-})
+  it('renders module and assignment group text correctly', async () => {
+    const assignment = await mockAssignment({
+      Assignment: {
+        modules: [{name: 'Test Module'}],
+        assignmentGroup: {name: 'Test assignmentGroup'}
+      }
+    })
+    const {getByTestId, getByText} = render(<AssignmentGroupModuleNav assignment={assignment} />)
 
-it('will not render module container if not present', () => {
-  ReactDOM.render(
-    <AssignmentGroupModuleNav
-      assignmentGroup={{name: 'Test assignmentGroup', link: 'testassignmentgrouplink'}}
-    />,
-    document.getElementById('fixtures')
-  )
-  const moduleLink = $('[data-test-id="module-link"]')
-  const assignmentGroupLink = $('[data-test-id="assignmentgroup-link"]')
-  expect(moduleLink).toHaveLength(0)
-  expect(assignmentGroupLink.text()).toEqual('Test assignmentGroup')
-})
+    const moduleLink = getByTestId('module-link')
+    const assignmentGroupLink = getByTestId('assignmentgroup-link')
 
-it('will not render assignment group container if not present', () => {
-  ReactDOM.render(
-    <AssignmentGroupModuleNav module={{name: 'Test Module', link: 'testmodulelink'}} />,
-    document.getElementById('fixtures')
-  )
-  const moduleLink = $('[data-test-id="module-link"]')
-  const assignmentGroupLink = $('[data-test-id="assignmentgroup-link"]')
-  expect(assignmentGroupLink).toHaveLength(0)
-  expect(moduleLink.text()).toEqual('Test Module')
-})
+    expect(moduleLink).toContainElement(getByText('Test Module'))
+    expect(assignmentGroupLink).toContainElement(getByText('Test assignmentGroup'))
+  })
 
-it('will render nothing if null props provided', () => {
-  ReactDOM.render(
-    <AssignmentGroupModuleNav module={null} assignmentGroup={null} />,
-    document.getElementById('fixtures')
-  )
-  const moduleLink = $('[data-test-id="module-link"]')
-  const assignmentGroupLink = $('[data-test-id="assignmentgroup-link"]')
-  expect(assignmentGroupLink).toHaveLength(0)
-  expect(moduleLink).toHaveLength(0)
+  it('will not render module container if not present', async () => {
+    const assignment = await mockAssignment({
+      Assignment: {
+        modules: [],
+        assignmentGroup: {name: 'Test assignmentGroup'}
+      }
+    })
+    const {getByTestId, getByText, queryByTestId} = render(
+      <AssignmentGroupModuleNav assignment={assignment} />
+    )
+
+    const moduleLink = queryByTestId('module-link')
+    const assignmentGroupLink = getByTestId('assignmentgroup-link')
+
+    expect(moduleLink).toBeNull()
+    expect(assignmentGroupLink).toContainElement(getByText('Test assignmentGroup'))
+  })
+
+  it('will not render assignment group container if not present', async () => {
+    const assignment = await mockAssignment({
+      Assignment: {
+        modules: [{name: 'Test Module'}],
+        assignmentGroup: null
+      }
+    })
+    const {getByTestId, getByText, queryByTestId} = render(
+      <AssignmentGroupModuleNav assignment={assignment} />
+    )
+
+    const moduleLink = getByTestId('module-link')
+    const assignmentGroupLink = queryByTestId('assignmentgroup-link')
+
+    expect(moduleLink).toContainElement(getByText('Test Module'))
+    expect(assignmentGroupLink).toBeNull()
+  })
+
+  it('will render nothing if null props provided', async () => {
+    const assignment = await mockAssignment({
+      Assignment: {modules: [], assignmentGroup: null}
+    })
+    const {queryByTestId} = render(<AssignmentGroupModuleNav assignment={assignment} />)
+
+    expect(queryByTestId('module-link')).toBeNull()
+    expect(queryByTestId('assignmentgroup-link')).toBeNull()
+  })
+
+  it('renders multiple modules', async () => {
+    const assignment = await mockAssignment({
+      Assignment: {
+        modules: [{name: 'Test Module 1'}, {name: 'Test Module 2'}]
+      }
+    })
+    const {getAllByTestId, getByText} = render(<AssignmentGroupModuleNav assignment={assignment} />)
+
+    const modules = getAllByTestId('module-link')
+    expect(modules.length).toEqual(2)
+    expect(modules[0]).toContainElement(getByText('Test Module 1'))
+    expect(modules[1]).toContainElement(getByText('Test Module 2'))
+  })
+
+  it('limits the maximum number of modules rendered', async () => {
+    const assignment = await mockAssignment({
+      Assignment: {
+        modules: [{}, {}, {}, {}]
+      }
+    })
+    const {getAllByTestId, getByTestId, getByText} = render(
+      <AssignmentGroupModuleNav assignment={assignment} />
+    )
+
+    const modules = getAllByTestId('module-link')
+    expect(modules.length).toEqual(2)
+    const moreModules = getByTestId('more-module-link')
+    expect(moreModules).toContainElement(getByText('More Modules'))
+  })
 })

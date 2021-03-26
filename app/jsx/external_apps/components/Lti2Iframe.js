@@ -17,7 +17,6 @@
  */
 
 import I18n from 'i18n!external_tools'
-import $ from 'jquery'
 import React from 'react'
 import PropTypes from 'prop-types'
 import iframeAllowances from '../lib/iframeAllowances'
@@ -37,23 +36,15 @@ export default class Lti2Iframe extends React.Component {
   }
 
   componentDidMount() {
-    window.addEventListener(
-      'message',
-      e => {
-        let message = e.data
-        if (typeof message !== 'object') {
-          message = JSON.parse(e.data)
-        }
-        if (message.subject === 'lti.lti2Registration') {
-          this.props.handleInstall(message, e)
-        }
-      },
-      false
-    )
+    window.addEventListener('message', this.handleMessage, false)
 
     if (this.iframe) {
       this.iframe.setAttribute('allow', iframeAllowances())
     }
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener('message', this.handleMessage, false)
   }
 
   getLaunchUrl = () => {
@@ -87,13 +78,23 @@ export default class Lti2Iframe extends React.Component {
     this.setState(newState)
   }
 
+  handleMessage = event => {
+    try {
+      let message = event.data
+      if (typeof message !== 'object') {
+        message = JSON.parse(event.data)
+      }
+      if (message.subject === 'lti.lti2Registration') {
+        this.props.handleInstall(message, event)
+      }
+    } catch (_error) {
+      // Something else posted the message.
+    }
+  }
+
   render() {
-    const beforeAlertStyles = `before_external_content_info_alert ${
-      this.state.beforeExternalContentAlertClass
-    }`
-    const afterAlertStyles = `after_external_content_info_alert ${
-      this.state.afterExternalContentAlertClass
-    }`
+    const beforeAlertStyles = `before_external_content_info_alert ${this.state.beforeExternalContentAlertClass}`
+    const afterAlertStyles = `after_external_content_info_alert ${this.state.afterExternalContentAlertClass}`
 
     return (
       <div id="lti2-iframe-container" style={this.props.hideComponent ? {display: 'none'} : {}}>
@@ -120,6 +121,7 @@ export default class Lti2Iframe extends React.Component {
             ref={e => {
               this.iframe = e
             }}
+            data-lti-launch="true"
           />
           <div
             onFocus={this.handleAlertFocus}

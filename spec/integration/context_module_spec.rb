@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -30,14 +32,14 @@ describe ContextModule do
     it "should require manage_content permission before showing add controls" do
       course_with_teacher_logged_in active_all: true
       get "/courses/#{@course.id}/modules"
-      doc = Nokogiri::HTML(response.body)
+      doc = Nokogiri::HTML5(response.body)
       expect(doc.at_css('.add_module_link')).not_to be_nil
 
       @course.account.role_overrides.create! role: ta_role, permission: 'manage_content', enabled: false
       course_with_ta course: @course
       user_session(@ta)
       get "/courses/#{@course.id}/modules"
-      doc = Nokogiri::HTML(response.body)
+      doc = Nokogiri::HTML5(response.body)
       expect(doc.at_css('.add_module_link')).to be_nil
     end
   end
@@ -51,7 +53,7 @@ describe ContextModule do
       get "/courses/#{@course.id}/modules"
       expect(response.body).to match(/My Sub Header Title/)
 
-      content_tag.update_attributes(:title => "My New Title")
+      content_tag.update(:title => "My New Title")
 
       get "/courses/#{@course.id}/modules"
       expect(response.body).to match(/My New Title/)
@@ -147,7 +149,7 @@ describe ContextModule do
         else
           expect(response).to be_successful
         end
-        html = Nokogiri::HTML(response.body)
+        html = Nokogiri::HTML5(response.body)
         expect(html.css('#test_content').length).to eq(@test_content_length || 0)
 
         # complete first module's requirements
@@ -167,14 +169,14 @@ describe ContextModule do
           "/courses/#{@course.id}/modules/#{@mod2.id}/items/first"
         get next_link
         expect(response).to be_redirect
-        expect(response.location.ends_with?(@test_url + "?module_item_id=#{@tag2.id}")).to be_truthy
+        expect(response.location.ends_with?("module_item_id=#{@tag2.id}")).to be_truthy
 
         # verify the second item is accessible
         get @test_url
         expect(response).to be_successful
-        html = Nokogiri::HTML(response.body)
+        html = Nokogiri::HTML5(response.body)
         if @is_attachment
-          expect(html.at_css('#file_content')['src']).to match %r{#{@test_url}}
+          expect(html.at_css('#file_content')['src']).to match %r{#{@test_url.split("?").first}}
         elsif @is_wiki_page
           expect(html.css('#wiki_page_show').length).to eq 1
         else
@@ -234,7 +236,7 @@ describe ContextModule do
         progression_testing(progress_type) do |content|
           @is_attachment = true
           att = Attachment.create!(:filename => 'test.html', :display_name => "test.html", :uploaded_data => StringIO.new(content), :folder => Folder.unfiled_folder(@course), :context => @course)
-          @test_url = "/courses/#{@course.id}/files/#{att.id}"
+          @test_url = "/courses/#{@course.id}/files/#{att.id}?fd_cookie_set=1"
           @tag2 = @mod2.add_item(:type => 'attachment', :id => att.id)
           expect(@tag2).to be_published
         end
@@ -262,12 +264,12 @@ describe ContextModule do
         user_session teacher1
         get "/courses/#{@course.id}/modules"
         expect(response).to be_successful
-        body1 = Nokogiri::HTML(response.body)
+        body1 = Nokogiri::HTML5(response.body)
 
         user_session teacher2
         get "/courses/#{@course.id}/modules"
         expect(response).to be_successful
-        body2 = Nokogiri::HTML(response.body)
+        body2 = Nokogiri::HTML5(response.body)
 
         expect(body1.at_css("#context_module_content_#{mod.id} .unlock_details").text).to match /4am/
         expect(body2.at_css("#context_module_content_#{mod.id} .unlock_details").text).to match /7am/

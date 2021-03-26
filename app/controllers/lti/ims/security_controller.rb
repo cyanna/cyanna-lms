@@ -49,6 +49,7 @@ module Lti::Ims
     # @returns JWKs
     def jwks
       keys = Lti::KeyStorage.public_keyset
+      response.set_header('Cache-Control', "max-age=#{Lti::KeyStorage.max_cache_age}")
       render json: { keys: keys }
     end
   end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -48,29 +50,6 @@ describe "security" do
       new_cookie = cookies['_normandy_session']
       expect(new_cookie).to be_present
       expect(cookie).not_to eql(new_cookie)
-    end
-  end
-
-  describe "permissions" do
-    # if we end up moving the permissions cache to memcache, this test won't be
-    # valid anymore and we need some more extensive tests for actual cache
-    # invalidation. right now, though, this is the only really valid way to
-    # test that we're actually flushing on every request.
-    it "should flush the role_override caches on every request" do
-      course_with_teacher_logged_in
-
-      get "/courses/#{@course.to_param}/users"
-      assert_response :success
-
-      expect(RoleOverride.send(:instance_variable_get, '@cached_permissions')).not_to be_empty
-      expect(RoleOverride.send(:class_variable_get, '@@role_override_chain')).not_to be_empty
-
-      get "/dashboard"
-      assert_response 301
-
-      # verify the cache is emptied on every request
-      expect(RoleOverride.send(:instance_variable_get, '@cached_permissions')).to be_empty
-      expect(RoleOverride.send(:class_variable_get, '@@role_override_chain')).to be_empty
     end
   end
 
@@ -429,7 +408,7 @@ describe "security" do
 
     user_session(@student)
     post "/courses/#{@course.id}/user_lists.json", params: {:user_list => "A1234567, A345678"}
-    expect(response).not_to be_success
+    expect(response).not_to be_successful
 
     user_session(@teacher)
     post "/courses/#{@course.id}/user_lists.json", params: {:user_list => "A1234567, A345678"}
@@ -768,7 +747,7 @@ describe "security" do
 
         get "/courses/#{@course.id}/details"
         expect(response).to be_successful
-        html = Nokogiri::HTML(response.body)
+        html = Nokogiri::HTML5(response.body)
         expect(html.css('.edit_course_link')).to be_empty
         expect(html.css('#tab-users')).to be_empty
         expect(html.css('#tab-navigation')).to be_empty
@@ -781,7 +760,7 @@ describe "security" do
 
         get "/courses/#{@course.id}/details"
         expect(response).to be_successful
-        html = Nokogiri::HTML(response.body)
+        html = Nokogiri::HTML5(response.body)
         expect(html.css('#course_form')).not_to be_empty
         expect(html.css('#tab-navigation')).not_to be_empty
       end
@@ -799,7 +778,7 @@ describe "security" do
         get "/courses/#{@course.id}/details"
         expect(response).to be_successful
         expect(response.body).not_to match /People/
-        html = Nokogiri::HTML(response.body)
+        html = Nokogiri::HTML5(response.body)
         expect(html.css('#tab-users')).to be_empty
 
         add_permission :read_roster
@@ -922,7 +901,7 @@ describe "security" do
 
         get "/courses/#{@course.id}/details"
         expect(response).to be_successful
-        html = Nokogiri::HTML(response.body)
+        html = Nokogiri::HTML5(response.body)
         expect(html.css('.section .assignments')).to be_empty
         expect(html.css('.section .syllabus')).to be_empty
         expect(html.css('.section .pages')).to be_empty
@@ -971,7 +950,7 @@ describe "security" do
 
         get "/courses/#{@course.id}/details"
         expect(response).to be_successful
-        html = Nokogiri::HTML(response.body)
+        html = Nokogiri::HTML5(response.body)
         expect(html.css('.section .assignments')).not_to be_empty
         expect(html.css('.section .syllabus')).not_to be_empty
         expect(html.css('.section .pages')).not_to be_empty
@@ -1007,7 +986,7 @@ describe "security" do
         expect(response).to be_successful
         expect(response.body).to match /Delete this Course/
 
-        html = Nokogiri::HTML(response.body)
+        html = Nokogiri::HTML5(response.body)
         expect(html.css('#course_account_id')).not_to be_empty
         expect(html.css('#course_enrollment_term_id')).not_to be_empty
 
@@ -1061,7 +1040,8 @@ describe "security" do
 
       it 'manage_sections' do
         course_with_teacher_logged_in(:active_all => 1)
-        remove_permission(:manage_sections, teacher_role)
+        remove_permission(:manage_sections_add, teacher_role)
+        remove_permission(:manage_sections_edit, teacher_role)
 
         get "/courses/#{@course.id}/settings"
         expect(response).to be_successful

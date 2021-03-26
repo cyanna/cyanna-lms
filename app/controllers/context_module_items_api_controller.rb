@@ -25,7 +25,7 @@
 #       "description": "",
 #       "properties": {
 #         "type": {
-#           "description": "one of 'must_view', 'must_submit', 'must_contribute', 'min_score'",
+#           "description": "one of 'must_view', 'must_submit', 'must_contribute', 'min_score', 'must_mark_done'",
 #           "example": "min_score",
 #           "type": "string",
 #           "allowableValues": {
@@ -33,7 +33,8 @@
 #               "must_view",
 #               "must_submit",
 #               "must_contribute",
-#               "min_score"
+#               "min_score",
+#               "must_mark_done"
 #             ]
 #           }
 #         },
@@ -276,7 +277,7 @@ class ContextModuleItemsApiController < ApplicationController
       # Get conditionally released objects if requested
       # TODO: Document in API when out of beta
       if includes.include?("mastery_paths")
-        opts[:conditional_release_rules] = ConditionalRelease::Service.rules_for(@context, @student, items, session)
+        opts[:conditional_release_rules] = ConditionalRelease::Service.rules_for(@context, @student, session)
       end
       render :json => items.map { |item| module_item_json(item, @student || @current_user, session, mod, prog, includes, opts) }
     end
@@ -357,11 +358,12 @@ class ContextModuleItemsApiController < ApplicationController
   #   Whether the external tool opens in a new tab. Only applies to
   #   'ExternalTool' type.
   #
-  # @argument module_item[completion_requirement][type] [String, "must_view"|"must_contribute"|"must_submit"]
+  # @argument module_item[completion_requirement][type] [String, "must_view"|"must_contribute"|"must_submit"|"must_mark_done"]
   #   Completion requirement for this module item.
   #   "must_view": Applies to all item types
   #   "must_contribute": Only applies to "Assignment", "Discussion", and "Page" types
   #   "must_submit", "min_score": Only apply to "Assignment" and "Quiz" types
+  #   "must_mark_done": Only applies to "Assignment" and "Page" types
   #   Inapplicable types will be ignored
   #
   # @argument module_item[completion_requirement][min_score] [Integer]
@@ -433,11 +435,12 @@ class ContextModuleItemsApiController < ApplicationController
   #   Whether the external tool opens in a new tab. Only applies to
   #   'ExternalTool' type.
   #
-  # @argument module_item[completion_requirement][type] [String, "must_view"|"must_contribute"|"must_submit"]
+  # @argument module_item[completion_requirement][type] [String, "must_view"|"must_contribute"|"must_submit"|"must_mark_done"]
   #   Completion requirement for this module item.
   #   "must_view": Applies to all item types
   #   "must_contribute": Only applies to "Assignment", "Discussion", and "Page" types
   #   "must_submit", "min_score": Only apply to "Assignment" and "Quiz" types
+  #   "must_mark_done": Only applies to "Assignment" and "Page" types
   #   Inapplicable types will be ignored
   #
   # @argument module_item[completion_requirement][min_score] [Integer]
@@ -488,9 +491,17 @@ class ContextModuleItemsApiController < ApplicationController
 
       if params[:module_item].has_key?(:published)
         if value_to_boolean(params[:module_item][:published])
-          @tag.publish
+          if module_item_publishable?(@tag)
+            @tag.publish
+          else
+            return render json: {message: "item can't be published"}, status: :unprocessable_entity
+          end
         else
-          @tag.unpublish
+          if module_item_unpublishable?(@tag)
+            @tag.unpublish
+          else
+            return render :json => {:message => "item can't be unpublished"}, :status => :forbidden
+          end
         end
         @tag.save
         @tag.update_asset_workflow_state!
@@ -537,37 +548,25 @@ class ContextModuleItemsApiController < ApplicationController
     get_module_item
     assignment = @item.assignment
     return render json: { message: 'requested item is not an assignment' }, status: :bad_request unless assignment
+    assignment_ids = ConditionalRelease::OverrideHandler.handle_assignment_set_selection(@student, assignment, params[:assignment_set_id])
 
-    response = ConditionalRelease::Service.select_mastery_path(
-      @context,
-      @current_user,
-      @student,
-      assignment,
-      params[:assignment_set_id],
-      session)
+    # assignment occurs in delayed job, may not be fully visible to user until job completes
+    assignments = @context.assignments.published.where(id: assignment_ids).
+      preload(Api::V1::Assignment::PRELOADS)
 
-    if response[:code] != '200'
-      render json: response[:body], status: response[:code]
-    else
-      assignment_ids = response[:body]['assignments'].map {|a| a['assignment_id'].try(&:to_i) }
-      # assignment occurs in delayed job, may not be fully visible to user until job completes
-      assignments = @context.assignments.published.where(id: assignment_ids).
-        preload(Api::V1::Assignment::PRELOADS)
+    Assignment.preload_context_module_tags(assignments)
 
-      Assignment.preload_context_module_tags(assignments)
+    # match cyoe order, omit unpublished or deleted assignments
+    assignments = assignments.index_by(&:id).values_at(*assignment_ids).compact
 
-      # match cyoe order, omit unpublished or deleted assignments
-      assignments = assignments.index_by(&:id).values_at(*assignment_ids).compact
+    # grab locally relevant module items
+    items = assignments.map(&:all_context_module_tags).flatten.select{|a| a.context_module_id == @module.id}
 
-      # grab locally relevant module items
-      items = assignments.map(&:all_context_module_tags).flatten.select{|a| a.context_module_id == @module.id}
-
-      render json: {
-        meta: { primaryCollection: 'assignments' },
-        items: items.map { |item| module_item_json(item, @student || @current_user, session, @module) },
-        assignments: assignments_json(assignments, @current_user, session)
-      }
-    end
+    render json: {
+      meta: { primaryCollection: 'assignments' },
+      items: items.map { |item| module_item_json(item, @student || @current_user, session, @module) },
+      assignments: assignments_json(assignments, @current_user, session)
+    }
   end
 
   # @API Delete module item
@@ -630,7 +629,6 @@ class ContextModuleItemsApiController < ApplicationController
     raise ActiveRecord::RecordNotFound unless @item && @item.visible_to_user?(user)
   end
 
-  MAX_SEQUENCES = 10
   # @API Get module item sequence
   #
   # Given an asset in a course, find the ModuleItem it belongs to, the previous and next Module Items
@@ -656,82 +654,7 @@ class ContextModuleItemsApiController < ApplicationController
       return render :json => { :message => 'invalid asset_type'}, :status => :bad_request unless asset_type
       asset_id = params[:asset_id]
       return render :json => { :message => 'missing asset_id' }, :status => :bad_request unless asset_id
-
-      # assemble a sequence of content tags in the course
-      # (break ties on module position by module id)
-      tag_ids = @context.sequential_module_item_ids & Shackles.activate(:slave) { @context.module_items_visible_to(@current_user).reorder(nil).pluck(:id) }
-
-      # find content tags to include
-      tag_indices = []
-      if asset_type == 'ContentTag'
-        tag_ids.each_with_index { |tag_id, ix| tag_indices << ix if tag_id == asset_id.to_i }
-      else
-        # map wiki page url to id
-        if asset_type == 'WikiPage'
-          page = @context.wiki_pages.not_deleted.where(url: asset_id).first
-          asset_id = page.id if page
-        else
-          asset_id = asset_id.to_i
-        end
-
-        # find the associated assignment id, if applicable
-        if asset_type == 'Quizzes::Quiz'
-          asset = @context.quizzes.where(id: asset_id.to_i).first
-          associated_assignment_id = asset.assignment_id if asset
-        end
-
-        if asset_type == 'DiscussionTopic'
-          asset = @context.send(asset_type.tableize).where(id: asset_id.to_i).first
-          associated_assignment_id = asset.assignment_id if asset
-        end
-
-        # find up to MAX_SEQUENCES tags containing the object (or its associated assignment)
-        matching_tag_ids = @context.context_module_tags.where(:id => tag_ids).
-          where(:content_type => asset_type, :content_id => asset_id).pluck(:id)
-        if associated_assignment_id
-          matching_tag_ids += @context.context_module_tags.where(:id => tag_ids).
-            where(:content_type => 'Assignment', :content_id => associated_assignment_id).pluck(:id)
-        end
-
-        if matching_tag_ids.any?
-          tag_ids.each_with_index { |tag_id, ix| tag_indices << ix if matching_tag_ids.include?(tag_id) }
-        end
-      end
-
-      tag_indices.sort!
-      if tag_indices.length > MAX_SEQUENCES
-        tag_indices = tag_indices[0, MAX_SEQUENCES]
-      end
-
-      # render the result
-      result = { :items => [] }
-
-      needed_tag_ids = []
-      tag_indices.each do |ix|
-        needed_tag_ids << tag_ids[ix]
-        needed_tag_ids << tag_ids[ix - 1] if ix > 0
-        needed_tag_ids << tag_ids[ix + 1] if ix < tag_ids.size - 1
-      end
-
-      needed_tags = ContentTag.where(:id => needed_tag_ids.uniq).preload(:context_module).index_by(&:id)
-      tag_indices.each do |ix|
-        hash = { :current => module_item_json(needed_tags[tag_ids[ix]], @current_user, session), :prev => nil, :next => nil }
-        if ix > 0
-          hash[:prev] = module_item_json(needed_tags[tag_ids[ix - 1]], @current_user, session)
-        end
-        if ix < tag_ids.size - 1
-          hash[:next] = module_item_json(needed_tags[tag_ids[ix + 1]], @current_user, session)
-        end
-        if cyoe_enabled?(@context)
-          is_student = @context.grants_right?(@current_user, session, :participate_as_student)
-          opts = { context: @context, user: @current_user, session: session, is_student: is_student }
-          hash[:mastery_path] = conditional_release_rule_for_module_item(needed_tags[tag_ids[ix]], opts)
-        end
-        result[:items] << hash
-      end
-      modules = needed_tags.values.map(&:context_module).uniq
-      result[:modules] = modules.map { |mod| module_json(mod, @current_user, session) }
-
+      result = context_module_sequence_items_by_asset_id(asset_id, asset_type)
       render :json => result
     end
   end
@@ -844,7 +767,7 @@ class ContextModuleItemsApiController < ApplicationController
 
     if params[:module_item][:completion_requirement].blank?
       reqs[@tag.id] = {}
-    elsif ["must_view", "must_submit", "must_contribute", "min_score"].include?(params[:module_item][:completion_requirement][:type])
+    elsif %w[must_view must_submit must_contribute min_score must_mark_done].include?(params[:module_item][:completion_requirement][:type])
       reqs[@tag.id] = params[:module_item][:completion_requirement].to_unsafe_h
     else
       @tag.errors.add(:completion_requirement, t(:invalid_requirement_type, "Invalid completion requirement type"))

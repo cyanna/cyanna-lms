@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -247,7 +249,7 @@ describe "assignment groups" do
     let(:assignment_name) { "Do this" }
     let(:assignment_points) { "13" }
     let(:time) {Time.zone.local(2018,2,7,4,15)}
-    let(:current_time) {format_time_for_view(time)}
+    let(:current_time) {format_time_for_view(time, :medium)}
 
     before :each do
       @course.require_assignment_group
@@ -328,6 +330,7 @@ describe "assignment groups" do
     fj('input[name="group_weight"]:visible').send_keys('50')
 
     fj('.create_group:visible').click
+    f('.ic-flash-success') # wait for element
     wait_for_ajaximations
 
     # setting weight for group 2
@@ -378,7 +381,7 @@ describe "assignment groups" do
         click_option('#assignment_group_id', "other")
       end
 
-      expect(f('h1.title')).to include_text(orig_title + 'edit')
+      expect(f('h1.title')).to include_text('edit' + orig_title)
       expect(@frozen_assign.reload.assignment_group.name).to eq "other"
     end
   end

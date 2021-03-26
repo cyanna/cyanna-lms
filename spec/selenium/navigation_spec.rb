@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -25,18 +27,24 @@ describe 'Global Navigation' do
       course_with_teacher_logged_in
     end
 
+    it 'should minimize and expand the global nav when clicked' do
+      get "/"
+      primary_nav_toggle = f('#primaryNavToggle')
+      primary_nav_toggle.click
+      expect(primary_nav_toggle).to have_attribute('title', /expand/i)
+      expect(f('body')).not_to have_class("primary-nav-expanded")
+      primary_nav_toggle.click
+      expect(primary_nav_toggle).to have_attribute('title', /minimize/i)
+      expect(f('body')).to have_class("primary-nav-expanded")
+    end
+
     describe 'Profile Link' do
       it 'should show the profile tray upon clicking' do
         get "/"
-        f('#global_nav_profile_link').click
-        expect(f('[aria-label="Global navigation tray"] [aria-label="User profile picture"]')).to be_displayed
-      end
-
-      # Profile links are hardcoded, so check that something is appearing for
-      # the display_name in the tray header
-      it 'should populate the profile tray with the current user display_name' do
-        get "/"
+        # Profile links are hardcoded, so check that something is appearing for
+        # the display_name in the tray header using the displayed_username helper
         expect(displayed_username).to eq(@user.name)
+        expect(f('[aria-label="Profile tray"] [aria-label="User profile picture"]')).to be_displayed
       end
     end
 
@@ -45,7 +53,7 @@ describe 'Global Navigation' do
         get "/"
         f('#global_nav_courses_link').click
         wait_for_ajaximations
-        expect(f("[aria-label='Global navigation tray']")).to be_displayed
+        expect(f("[aria-label='Courses tray']")).to be_displayed
       end
 
       it 'should populate the courses tray when using the keyboard to open it' do
@@ -53,7 +61,7 @@ describe 'Global Navigation' do
         driver.execute_script('$("#global_nav_courses_link").focus()')
         f('#global_nav_courses_link').send_keys(:enter)
         wait_for_ajaximations
-        links = ff('[aria-label="Global navigation tray"] li a')
+        links = ff('[aria-label="Courses tray"] li a')
         expect(links.count).to eql 2
       end
     end
@@ -76,15 +84,13 @@ describe 'Global Navigation' do
         get "/"
         f('#global_nav_groups_link').click
         wait_for_ajaximations
-        links = ff('[aria-label="Global navigation tray"] li a')
+        links = ff('[aria-label="Groups tray"] li a')
         expect(links.map(&:text)).to eq(['Z Current Group', 'All Groups'])
       end
     end
 
     describe 'LTI Tools' do
       it 'should show a custom logo/link for LTI tools' do
-        Account.default.enable_feature! :lor_for_account
-        @teacher.enable_feature! :lor_for_user
         @tool = Account.default.context_external_tools.new({
           :name => "Commons",
           :domain => "canvaslms.com",
@@ -103,15 +109,43 @@ describe 'Global Navigation' do
         expect(f('.ic-icon-svg--lti')).to be_displayed
       end
     end
-    describe 'Navigation Expand/Collapse Link' do
-      it 'should collapse and expand the navigation when clicked' do
+
+    describe 'Recent History' do
+      before do
+        Setting.set('enable_page_views', 'db')
+        Account.default.enable_feature!(:recent_history)
+        @assignment = @course.assignments.create(:name => "another assessment")
+        @quiz = Quizzes::Quiz.create!(:title => 'quiz1', :context => @course)
+        page_view_for url: app_url + "/courses/#{@course.id}/assignments/#{@assignment.id}", context: @course,
+                      created_at: 5.minutes.ago, asset_category: 'assignments',
+                      asset_code: @assignment.asset_string
+        page_view_for url: app_url + "/courses/#{@course.id}/quizzes/#{@quiz.id}", context: @course,
+                      created_at: 1.minute.ago, asset_category: 'quizzes',
+                      asset_code: @quiz.asset_string
+      end
+
+      it 'should show the Recent History tray upon clicking' do
         get "/"
-        f('#primaryNavToggle').click
+        f("#global_nav_history_link").click
         wait_for_ajaximations
-        expect(f('body')).not_to have_class("primary-nav-expanded")
-        f('#primaryNavToggle').click
+        expect(f("[aria-label='Recent History tray']")).to be_displayed
+      end
+
+      it 'should show recent history items on Recent History tray' do
+        get "/"
+        f("#global_nav_history_link").click
         wait_for_ajaximations
-        expect(f('body')).to have_class("primary-nav-expanded")
+        navigation_element_list = ffxpath("//*[@id = 'nav-tray-portal']//li//a")
+        expect(navigation_element_list[0].attribute('aria-label')).to eq('quiz1, Quiz')
+        expect(navigation_element_list[1].attribute('aria-label')).to eq('another assessment, Assignment')
+      end
+
+      it 'should include recent history assignment link' do
+        get "/"
+        f("#global_nav_history_link").click
+        wait_for_ajaximations
+        navigation_elements = ffxpath("//*[@id = 'nav-tray-portal']//li//a")
+        expect(navigation_elements[1].attribute('href')).to eq(app_url + "/courses/#{@course.id}/assignments/#{@assignment.id}")
       end
     end
   end

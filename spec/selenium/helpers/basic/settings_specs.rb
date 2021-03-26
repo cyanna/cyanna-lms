@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -66,8 +68,7 @@ shared_examples_for "settings basic tests" do |account_type|
 
   context "account settings" do
     def click_submit
-      submit_form("#account_settings")
-      wait_for_ajax_requests
+      wait_for_new_page_load { submit_form("#account_settings") }
     end
 
     before(:each) do

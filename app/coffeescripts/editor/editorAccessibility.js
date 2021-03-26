@@ -17,7 +17,6 @@
 
 import I18n from 'i18n!editor_accessibility'
 import $ from 'jquery'
-import htmlEscape from 'str/htmlEscape'
 
 // #
 // Used to insert accessibility titles into core TinyMCE components
@@ -43,6 +42,7 @@ export default class EditorAccessiblity {
 
   _addLabels() {
     this.$el.attr('aria-label', I18n.t('Rich Content Editor'))
+    $(this.editor.getBody()).attr('aria-label', $(`label[for="${this.id_prepend}"]`).text())
     this.$el
       .find("div[aria-label='Font Sizes']")
       .attr('aria-label', I18n.t('titles.font_size', 'Font Size, press down to select'))

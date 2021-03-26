@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2016 - present Instructure, Inc.
 #
@@ -33,6 +35,7 @@ module CallStackUtils
     # remove things until we get to the frd error cause
     if bt.any? { |line| line =~ line_regex && line !~ APP_IGNORE_REGEX  }
       bt.shift while bt.first !~ line_regex || bt.first =~ APP_IGNORE_REGEX
+      bt.pop while bt.last !~ line_regex || bt.last =~ APP_IGNORE_REGEX
     end
     bt
   end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -39,10 +41,9 @@ describe "quizzes" do
     before(:once) do
       course_with_teacher(active_all: true)
       course_with_student(course: @course, active_enrollment: true)
-      @course.update_attributes(:name => 'teacher course')
+      @course.update(:name => 'teacher course')
       @course.save!
       @course.reload
-      enable_all_rcs @course.account
     end
 
     before(:each) do

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -45,7 +47,7 @@ module GraphQLHelpers
   end
 
   def self.parse_relay_or_legacy_id(relay_or_legacy_id, expected_type)
-    if relay_or_legacy_id =~ /\A\d+\Z/
+    if relay_or_legacy_id.nil? || relay_or_legacy_id =~ /\A\d+\Z/
       relay_or_legacy_id
     else
       type, id = GraphQL::Schema::UniqueWithinType.decode(relay_or_legacy_id)

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -43,11 +45,12 @@ module Types
 
     implements GraphQL::Types::Relay::Node
     implements Interfaces::TimestampInterface
+    implements Interfaces::LegacyIDInterface
+    implements Interfaces::AssetStringInterface
 
     alias :enrollment :object
 
     global_id_field :id
-    field :_id, ID, "legacy canvas id", method: :id, null: false
 
     field :user, UserType, null: true
     def user
@@ -76,16 +79,19 @@ module Types
     end
     DEFAULT_GRADING_PERIOD = "default_grading_period"
     def grades(grading_period_id: DEFAULT_GRADING_PERIOD)
-      Loaders::AssociationLoader.for(Enrollment, [:scores, :user, :course]).
-        load(enrollment).then do
-          if grading_period_id == DEFAULT_GRADING_PERIOD
-            Loaders::CurrentGradingPeriodLoader.load(enrollment.course).then { |gp, _|
-              load_grades(gp&.id)
-            }
-          else
-            load_grades(grading_period_id)
-          end
+      Promise.all([
+        load_association(:scores),
+        load_association(:user),
+        load_association(:course)
+      ]).then do
+        if grading_period_id == DEFAULT_GRADING_PERIOD
+          Loaders::CurrentGradingPeriodLoader.load(enrollment.course).then { |gp, _|
+            load_grades(gp&.id)
+          }
+        else
+          load_grades(grading_period_id)
         end
+      end
     end
 
     def load_grades(grading_period_id)

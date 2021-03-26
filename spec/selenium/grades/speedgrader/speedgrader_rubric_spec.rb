@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -52,12 +54,11 @@ describe "speed grader - rubrics" do
     expect(rubric).to be_displayed
 
     # test rubric input
-    f('td.criterion_points input').send_keys('3')
+    f('td[data-testid="criterion-points"] input').send_keys('3')
     expand_right_pane
-    fj("span:contains('Amazing'):visible").click
+    ff(".rating-description").select { |elt| elt.displayed? && elt.text == "Amazing" }[0].click
     f('svg[name="IconFeedback"]').find_element(:xpath, '../../parent::button').click
     f("textarea[data-selenium='criterion_comments_text']").send_keys('special rubric comment')
-    ffj("button:contains('Update Comment')", nil).second.click
     wait_for_ajaximations
     expect(f("span[data-selenium='rubric_total']")).to include_text('8')
     wait_for_ajaximations
@@ -78,7 +79,7 @@ describe "speed grader - rubrics" do
     @association.save!
 
     Speedgrader.visit(@course.id, @assignment.id)
-    make_full_screen
+
     Speedgrader.view_rubric_button.click
     expand_right_pane
     # grade both criteria
@@ -107,7 +108,6 @@ describe "speed grader - rubrics" do
     Speedgrader.expand_right_pane
     Speedgrader.comment_button_for_row("no outcome row").click
     Speedgrader.additional_comment_textarea.send_keys(to_comment)
-    Speedgrader.update_comment_button.click
     wait_for_ajaximations
     Speedgrader.enter_rubric_points('1')
     button = Speedgrader.save_rubric_button
@@ -116,7 +116,7 @@ describe "speed grader - rubrics" do
       true
     }
     wait_for_ajaximations
-    expect(Speedgrader.rubric_comment_for_row("no outcome row").text).to eq to_comment
+    expect(Speedgrader.rubric_comment_for_row("no outcome row")).to include_text to_comment
   end
 
   it "should not convert invalid text to 0", priority: "2", test_id: 283751 do
@@ -131,14 +131,14 @@ describe "speed grader - rubrics" do
     wait_for_ajaximations
 
     # test rubric input
-    f('td.criterion_points input').send_keys('SMRT')
+    f('td[data-testid="criterion-points"] input').send_keys('SMRT')
     scroll_into_view('button.save_rubric_button')
     f('#rubric_full .save_rubric_button').click
     wait_for_ajaximations
     scroll_into_view('.toggle_full_rubric')
     f('.toggle_full_rubric').click
     wait_for_ajaximations
-    expect(f('.rubric_container .criterion_points input')).to have_value('--')
+    expect(f('.rubric_container td[data-testid="criterion-points"] input')).to have_value('--')
   end
 
   it "ignores rubric lines for grading", priority: "1", test_id: 283989 do

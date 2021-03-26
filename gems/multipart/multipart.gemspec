@@ -14,10 +14,10 @@ Gem::Specification.new do |spec|
   spec.test_files    = spec.files.grep(%r{^(test|spec|features)/})
   spec.require_paths = ["lib"]
 
-  spec.add_dependency "mime-types", "~> 1.17"
+  spec.add_dependency "mime-types", "~> 3.2"
   spec.add_dependency "canvas_slug"
 
-  spec.add_development_dependency "bundler", "~> 1.5"
+  spec.add_development_dependency "bundler", "~> 2.2"
   spec.add_development_dependency "rake"
   spec.add_development_dependency "rspec", "~> 3.5.0"
   spec.add_development_dependency "rack", "~> 1.6"

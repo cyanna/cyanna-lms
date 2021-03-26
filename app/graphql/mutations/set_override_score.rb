@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -25,23 +27,48 @@ class Mutations::SetOverrideScore < Mutations::BaseMutation
 
   field :grades, Types::GradesType, null: true
 
+  # grades is a +Score+ object, but for audit log purposes we want to log these
+  # changes to the enrollment instead (Scores are invisible to users of Canvas)
+  def self.grades_log_entry(score, _context)
+    score.enrollment
+  end
+
   def resolve(input:)
     enrollment_id = input[:enrollment_id]
-    grading_period_id = input[:grading_period_id]
 
-    enrollment = Enrollment.find(enrollment_id)
-    score_params = grading_period_id.present? ? {grading_period_id: grading_period_id} : nil
-    score = enrollment.find_score(score_params)
-    raise ActiveRecord::RecordNotFound if score.blank?
+    # If the relevant user has multiple enrollments in this course, we need
+    # to update them all to prevent inconsistencies
+    requested_enrollment = Enrollment.active.find(enrollment_id)
+    current_enrollments = StudentEnrollment.active.where(
+      course: requested_enrollment.course_id,
+      user: requested_enrollment.user_id
+    )
 
-    if authorized_action?(score.course, :manage_grades)
-      score.override_score = input[:override_score]
-      if score.save
+    # Even if we do update multiple enrollments, though, we only want to
+    # return the score for the enrollment that was passed to us
+    return_value = nil
+
+    current_enrollments.each do |enrollment|
+      verify_authorized_action!(enrollment.course, :manage_grades)
+
+      # Only record a grade change for the enrollment matching the requested one
+      score = enrollment.update_override_score(
+        grading_period_id: input[:grading_period_id],
+        override_score: input[:override_score],
+        updating_user: current_user,
+        record_grade_change: enrollment == requested_enrollment
+      )
+
+      next unless enrollment == requested_enrollment
+
+      return_value = if score.valid?
         {grades: score}
       else
         errors_for(score)
       end
     end
+
+    return_value
   rescue ActiveRecord::RecordNotFound
     raise GraphQL::ExecutionError, "not found"
   end

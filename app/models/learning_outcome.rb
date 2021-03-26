@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -18,9 +20,9 @@
 
 class LearningOutcome < ActiveRecord::Base
   include Workflow
-  include OutcomeAttributes
   include MasterCourses::Restrictor
   restrict_columns :state, [:workflow_state]
+  self.ignored_columns = %i[migration_id_2 vendor_guid_2 root_account_id]
 
   belongs_to :context, polymorphic: [:account, :course]
   has_many :learning_outcome_results
@@ -30,30 +32,21 @@ class LearningOutcome < ActiveRecord::Base
 
   before_validation :infer_default_calculation_method, :adjust_calculation_int
   before_save :infer_defaults
+  before_save :infer_root_account_ids
   after_save :propagate_changes_to_rubrics
-
-  CALCULATION_METHODS = {
-    'decaying_average' => "Decaying Average",
-    'n_mastery'        => "n Number of Times",
-    'highest'          => "Highest Score",
-    'latest'           => "Most Recent Score",
-  }.freeze
-  VALID_CALCULATION_INTS = {
-    "decaying_average" => (1..99),
-    "n_mastery" => (1..5),
-    "highest" => [].freeze,
-    "latest" => [].freeze,
-  }.freeze
 
   validates :description, length: { maximum: maximum_text_length, allow_nil: true, allow_blank: true }
   validates :short_description, length: { maximum: maximum_string_length }
   validates :vendor_guid, length: { maximum: maximum_string_length, allow_nil: true }
   validates :display_name, length: { maximum: maximum_string_length, allow_nil: true, allow_blank: true }
-  validates :calculation_method, inclusion: { in: CALCULATION_METHODS.keys,
-    message: -> { t(
-      "calculation_method must be one of the following: %{calc_methods}",
-      :calc_methods => CALCULATION_METHODS.keys.to_s
-    ) }
+  validates :calculation_method, inclusion: {
+    in: OutcomeCalculationMethod::CALCULATION_METHODS,
+    message: -> {
+      t(
+        "calculation_method must be one of the following: %{calc_methods}",
+        :calc_methods => OutcomeCalculationMethod::CALCULATION_METHODS.to_s
+      )
+    }
   }
   validates :short_description, :workflow_state, presence: true
   sanitize_field :description, CanvasSanitize::SANITIZE
@@ -89,6 +82,35 @@ class LearningOutcome < ActiveRecord::Base
     end
   end
 
+  def infer_root_account_ids
+    return if self.root_account_ids.present?
+
+    context_root_account_id = context.try(:resolved_root_account_id)
+
+    # find linked contexts
+    links = self.new_record? ? [] :
+            ContentTag.learning_outcome_links
+              .preload(:context)
+              .where(content_id: self, context_type: ['Account', 'Course'])
+              .select(:context_type, :context_id)
+              .distinct
+    link_root_account_ids = links.map { |link| link.context.resolved_root_account_id }
+
+    self.root_account_ids = ([context_root_account_id] + link_root_account_ids).uniq.compact
+  end
+
+  def add_root_account_id_for_context!(context)
+    return if self.root_account_ids.nil? # not initialized yet
+
+    root_account_id = context.try(:resolved_root_account_id)
+    return if root_account_id.nil?
+
+    unless self.root_account_ids.include? root_account_id
+      self.root_account_ids << root_account_id
+      self.save!
+    end
+  end
+
   def validate_calculation_int
     unless self.class.valid_calculation_int?(calculation_int, calculation_method)
       valid_ints = self.class.valid_calculation_ints(self.calculation_method)
@@ -108,11 +130,11 @@ class LearningOutcome < ActiveRecord::Base
   end
 
   def self.valid_calculation_method?(method)
-    CALCULATION_METHODS.keys.include?(method)
+    OutcomeCalculationMethod::CALCULATION_METHODS.include?(method)
   end
 
   def self.valid_calculation_ints(method)
-    VALID_CALCULATION_INTS[method]
+    OutcomeCalculationMethod::VALID_CALCULATION_INTS[method]
   end
 
   def self.valid_calculation_int?(int, method)
@@ -155,27 +177,18 @@ class LearningOutcome < ActiveRecord::Base
   def align(asset, context, opts={})
     tag = find_or_create_tag(asset, context)
     tag.tag = determine_tag_type(opts[:mastery_type])
-    tag.position = (self.alignments.map(&:position).compact.max || 1) + 1
     tag.mastery_score = opts[:mastery_score] if opts[:mastery_score]
     tag.save
 
-    create_missing_outcome_link(context) if context.is_a? Course
-    tag
-  end
-
-  def reorder_alignments(context, order)
-    order_hash = {}
-    order.each_with_index{|o, i| order_hash[o.to_i] = i; order_hash[o] = i }
-    tags = self.alignments.where(context_id: context, context_type: context.class.to_s, tag_type: 'learning_outcome')
-    tags = tags.sort_by{|t| order_hash[t.id] || order_hash[t.content_asset_string] || CanvasSort::Last }
-    updates = []
-    tags.each_with_index do |tag, idx|
-      tag.position = idx + 1
-      updates << "WHEN id=#{tag.id} THEN #{idx + 1}"
+    if context.is_a? Course
+      create_missing_outcome_link(context)
+      if MasterCourses::MasterTemplate.is_master_course?(context)
+        # mark for re-sync
+        context.learning_outcome_links.polymorphic_where(:content => self).touch_all if self.context_type == "Account"
+        self.touch
+      end
     end
-    ContentTag.where(:id => tags).update_all("position=CASE #{updates.join(" ")} ELSE position END")
-    self.touch
-    tags
+    tag
   end
 
   def remove_alignment(alignment_id, context)
@@ -359,6 +372,7 @@ class LearningOutcome < ActiveRecord::Base
 
   scope(:for_context_codes, ->(codes) { where(:context_code => codes) })
   scope(:active, -> { where("learning_outcomes.workflow_state<>'deleted'") })
+  scope(:active_first, -> { order(Arel.sql("CASE WHEN workflow_state = 'active' THEN 0 ELSE 1 END")) })
   scope(:has_result_for_user,
     lambda do |user|
       joins(:learning_outcome_results)
@@ -377,7 +391,7 @@ class LearningOutcome < ActiveRecord::Base
       !self.saved_change_to_short_description? &&
       !self.saved_change_to_description?
 
-    self.send_later_if_production(:update_associated_rubrics)
+    delay_if_production.update_associated_rubrics
   end
 
   def update_associated_rubrics
@@ -389,17 +403,14 @@ class LearningOutcome < ActiveRecord::Base
   def updateable_rubrics
     conds = { learning_outcome_id: self.id, content_type: 'Rubric', workflow_state: 'active' }
     # Find all unassessed, active rubrics aligned to this outcome, referenced by no more than one assignment
-    Rubric.where(id:
-      Rubric.select('rubrics.id').
-        where.not(workflow_state: 'deleted').
+    Rubric.where(
+      id: Rubric.
+        active.
         joins(:learning_outcome_alignments).
         where(content_tags: conds).
-        joins("LEFT JOIN #{RubricAssociation.quoted_table_name} ra2 ON rubrics.id = ra2.rubric_id AND ra2.purpose = 'grading'").
-        group('rubrics.id').
-        having('COUNT(rubrics.id) < 2')).
-      joins("LEFT JOIN #{RubricAssociation.quoted_table_name} ra2 ON rubrics.id = ra2.rubric_id AND ra2.purpose = 'grading'" \
-            " LEFT JOIN #{RubricAssessment.quoted_table_name} ra3 ON ra2.id = ra3.rubric_association_id").
-      where('ra3.id IS NULL')
+        with_at_most_one_association.
+        select('rubrics.id')
+    ).unassessed
   end
 
   def updateable_rubrics?
@@ -423,7 +434,9 @@ class LearningOutcome < ActiveRecord::Base
       content: asset,
       tag_type: 'learning_outcome',
       context: context
-    )
+    ) do |_a|
+      InstStatsd::Statsd.increment('learning_outcome.align')
+    end
   end
 
   def determine_tag_type(mastery_type)

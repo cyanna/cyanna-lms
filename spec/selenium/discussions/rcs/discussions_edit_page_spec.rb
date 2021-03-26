@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -47,7 +49,7 @@ describe "discussions" do
 
       before(:each) do
         user_session(teacher)
-        enable_all_rcs @course.account
+        Account.default.enable_feature!(:rce_enhancements)
         stub_rcs_config
       end
 
@@ -114,7 +116,6 @@ describe "discussions" do
 
       it "should save and display all changes", priority: "2", test_id: 270923 do
         course.require_assignment_group
-
         confirm(:off)
         toggle(:on)
         confirm(:on)

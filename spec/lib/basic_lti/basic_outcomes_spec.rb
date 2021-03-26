@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2013 - present Instructure, Inc.
 #
@@ -110,7 +112,7 @@ describe BasicLTI::BasicOutcomes do
 
   describe ".decode_source_id" do
     it 'successfully decodes a source_id' do
-      expect(described_class.decode_source_id(tool, source_id)).to eq [@course, assignment, @user]
+      expect(described_class.decode_source_id(tool, source_id)).to eq [assignment, @user]
     end
 
     it 'throws Invalid sourcedid if sourcedid is nil' do
@@ -189,7 +191,7 @@ describe BasicLTI::BasicOutcomes do
       end
 
       it "decodes a jwt signed sourcedid" do
-        expect(described_class.decode_source_id(tool, jwt_source_id)).to eq [@course, assignment, @user]
+        expect(described_class.decode_source_id(tool, jwt_source_id)).to eq [assignment, @user]
       end
 
       it 'throws invalid JWT if token is unrecognized' do
@@ -212,7 +214,7 @@ describe BasicLTI::BasicOutcomes do
     end
   end
 
-  describe "#handle_replaceResult" do
+  describe "#handle_replace_result" do
     it "accepts a grade" do
       xml.css('resultData').remove
       request = BasicLTI::BasicOutcomes.process_request(tool, xml)
@@ -235,7 +237,7 @@ describe BasicLTI::BasicOutcomes do
       expect(request.description).to eq 'Assignment has no points possible.'
     end
 
-    it "doesn't explode when an assignment with no points possible receives a grade for an existing submission " do
+    it "doesn't explode when an assignment with no points possible receives a grade for an existing submission" do
       xml.css('resultData').remove
       assignment.points_possible = nil
       assignment.save!
@@ -385,8 +387,45 @@ describe BasicLTI::BasicOutcomes do
       expect(submission.submission_type).to eq 'basic_lti_launch'
     end
 
-    context "submissions" do
+    context "quizzes.next submissions" do
+      let(:tool) do
+        @course.context_external_tools.create(
+          name: "a",
+          url: "http://google.com",
+          consumer_key: '12345',
+          shared_secret: 'secret',
+          tool_id: 'Quizzes 2'
+        )
+      end
 
+      let(:assignment) do
+        @course.assignments.create!(
+          {
+              title: "Quizzes.next Quiz",
+              description: "value for description",
+              due_at: Time.zone.now,
+              points_possible: "1.5",
+              submission_types: 'external_tool',
+              grading_type: "letter_grade",
+              external_tool_tag_attributes: {url: tool.url}
+          }
+        )
+      end
+
+      let(:submitted_at_timestamp) { 1.day.ago.iso8601(3) }
+
+      it "stores the score and grade for quizzes.next assignments" do
+        xml.css('resultData').remove
+        xml.at_css('imsx_POXBody > replaceResultRequest > resultRecord > result').add_child(
+          "<resultData><text>#{submitted_at_timestamp}</text>
+          <url>http://example.com/launch</url></resultData>"
+        )
+        BasicLTI::BasicOutcomes.process_request(tool, xml)
+        expect(assignment.submissions.first.grade).to eq "A-"
+      end
+    end
+
+    context "submissions" do
       it "creates a new submissions if there isn't one" do
         xml.css('resultData').remove
         expect{BasicLTI::BasicOutcomes.process_request(tool, xml)}.

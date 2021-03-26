@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -183,7 +185,7 @@ module GreatExpectations
         raise Error.for(message, location)
       else
         $stderr.puts "\e[31mWarning: #{message}"
-        $stderr.puts "See: " + (location || CallStackUtils.best_line_for(caller)) + "\e[0m"
+        $stderr.puts "See: " + (location || CallStackUtils.best_line_for(caller).join("\n")) + "\e[0m"
       end
     end
   end

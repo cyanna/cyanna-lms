@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -23,6 +25,7 @@ describe 'quizzes question creation' do
   include QuizzesCommon
 
   before(:each) do
+    Account.default.enable_feature!(:rce_enhancements)
     stub_rcs_config
   end
 
@@ -30,7 +33,6 @@ describe 'quizzes question creation' do
 
     before(:each) do
       course_with_teacher_logged_in
-      enable_all_rcs @course.account
       @last_quiz = start_quiz_question
     end
 
@@ -421,7 +423,6 @@ describe 'quizzes question creation' do
 
     before(:each) do
       course_with_teacher_logged_in
-      enable_all_rcs @course.account
       quiz_questions_creation
     end
 
@@ -441,7 +442,6 @@ describe 'quizzes question creation' do
   context 'when editing a quiz question' do
     before(:each) do
       course_with_teacher_logged_in
-      enable_all_rcs @course.account
       @quiz = @course.quizzes.create!(title: 'new quiz')
     end
 
@@ -475,7 +475,6 @@ describe 'quizzes question creation' do
 
     before(:each) do
       course_with_teacher_logged_in
-      enable_all_rcs @course.account
     end
 
     it 'creates a basic quiz question group', priority: "1", test_id: 140587 do
@@ -490,7 +489,6 @@ describe 'quizzes question creation' do
 
     before(:each) do
       course_with_teacher_logged_in
-      enable_all_rcs @course.account
     end
 
     it 'adds questions from a question bank', priority: "1", test_id: 140671 do

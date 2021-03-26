@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -25,7 +27,6 @@ describe 'Grading quizzes' do
   context 'as a teacher' do
     before(:once) do
       course_with_teacher(active_all: 1)
-      enable_all_rcs @course.account
       student_in_course(active_all: 1)
     end
 
@@ -74,7 +75,7 @@ describe 'Grading quizzes' do
 
       context 'after deleting an answer to a quiz question' do
         it 'doesn\'t offer regrade options', priority: "1", test_id: 140626 do
-          make_full_screen
+
           get "/courses/#{@course.id}/quizzes/#{@quiz.id}/edit"
           dismiss_flash_messages # can interfere w/ our hovering
           click_questions_tab

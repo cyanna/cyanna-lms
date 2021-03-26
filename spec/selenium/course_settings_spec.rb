@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -28,7 +30,29 @@ describe "course settings" do
   it "should show unused tabs to teachers" do
     get "/courses/#{@course.id}/settings"
     wait_for_ajaximations
-    expect(ff("#section-tabs .section.section-tab-hidden").count).to be > 0
+    expect(ff("#section-tabs .section.section-hidden").count).to be > 0
+  end
+
+  context "considering homeroom courses" do
+    let(:canvas_for_elem_flag){false}
+    before(:each) do
+      canvas_for_elem_flag = @account.root_account.feature_enabled?(:canvas_for_elementary)
+    end
+    after(:each) do
+      @account.root_account.set_feature_flag!(:canvas_for_elementary, canvas_for_elem_flag ? 'on' : 'off')
+    end
+
+    it 'hides most tabs if set' do
+      @account.root_account.enable_feature!(:canvas_for_elementary)
+      @course.homeroom_course = true
+      @course.save!
+
+      get "/courses/#{@course.id}/settings"
+      expect(ff('#course_details_tabs > ul li').length).to eq 2
+      expect(f('#course_details_tab')).to be_displayed
+      expect(f('#sections_tab')).to be_displayed
+    end
+
   end
 
   describe "course details" do
@@ -121,6 +145,17 @@ describe "course settings" do
       message = f('.self_enrollment_message')
       expect(message).to include_text(code)
       expect(message).not_to include_text('self_enrollment_code')
+    end
+
+    it "should not show the self enrollment code and url for blueprint templates even if enabled" do
+      a = Account.default
+      a.courses << @course
+      a.settings[:self_enrollment] = 'manually_created'
+      a.save!
+      @course.update(:self_enrollment => true)
+      MasterCourses::MasterTemplate.set_as_master_course(@course)
+      get "/courses/#{@course.id}/settings"
+      expect(f('.self_enrollment_message')).to_not be_displayed
     end
 
     it "should enable announcement limit if show announcements enabled" do
@@ -398,9 +433,9 @@ describe "course settings" do
       wait_for_ajaximations
       expect(f("#all-results")).to be_displayed
 
-      expect(f("#all-results .alert")).to include_text("Found 17 unresponsive links")
+      expect(f("#all-results .alert")).to include_text("Found 17 broken links")
 
-      result_links = ff("#all-results .result a")
+      result_links = ff("#all-results .result h2 a")
       expect(result_links.map{|link| link.text.strip}).to match_array([
         'Course Syllabus',
         aq.question_data[:question_name],
@@ -408,7 +443,7 @@ describe "course settings" do
         assmnt.title,
         event.title,
         topic.title,
-        tag.title,
+        mod.name,
         quiz.title,
         page.title
       ])
@@ -429,11 +464,11 @@ describe "course settings" do
 
       @course.syllabus_body = %{
         <a href='#{active_link}'>link</a>
-        <a href='#{unpublished_link}'>link</a>
-        <a href='#{deleted_link}'>link</a>
+        <a href='#{unpublished_link}'>unpublished link</a>
+        <a href='#{deleted_link}'>deleted link</a>
       }
       @course.save!
-      page = @course.wiki_pages.create!(:title => "wikiii", :body => %{<a href='#{unpublished_link}'>link</a>})
+      page = @course.wiki_pages.create!(:title => "wikiii", :body => %{<a href='#{unpublished_link}'>unpublished link</a>})
 
       get "/courses/#{@course.id}/link_validator"
       wait_for_ajaximations
@@ -444,29 +479,29 @@ describe "course settings" do
       wait_for_ajaximations
       expect(f("#all-results")).to be_displayed
 
-      expect(f("#all-results .alert")).to include_text("Found 3 unresponsive links")
+      expect(f("#all-results .alert")).to include_text("Found 3 broken links")
       syllabus_result = ff('#all-results .result').detect{|r| r.text.include?("Course Syllabus")}
-      expect(syllabus_result).to include_text(unpublished_link)
-      expect(syllabus_result).to include_text(deleted_link)
+      expect(syllabus_result).to include_text('unpublished link')
+      expect(syllabus_result).to include_text('deleted link')
       page_result = ff('#all-results .result').detect{|r| r.text.include?(page.title)}
-      expect(page_result).to include_text(unpublished_link)
+      expect(page_result).to include_text('unpublished link')
 
       # hide the unpublished results
       move_to_click('label[for=show_unpublished]')
       wait_for_ajaximations
 
-      expect(f("#all-results .alert")).to include_text("Found 1 unresponsive link")
-      expect(ff("#all-results .result a").count).to eq 1
+      expect(f("#all-results .alert")).to include_text("Found 1 broken link")
+      expect(ff("#all-results .result h2 a").count).to eq 1
       result = f("#all-results .result")
       expect(result).to include_text("Course Syllabus")
-      expect(result).to include_text(deleted_link)
+      expect(result).to include_text('deleted link')
 
       # show them again
       move_to_click('label[for=show_unpublished]')
 
-      expect(f("#all-results .alert")).to include_text("Found 3 unresponsive links")
+      expect(f("#all-results .alert")).to include_text("Found 3 broken links")
       page_result = ff('#all-results .result').detect{|r| r.text.include?(page.title)}
-      expect(page_result).to include_text(unpublished_link)
+      expect(page_result).to include_text('unpublished link')
     end
   end
 end

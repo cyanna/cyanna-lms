@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -25,9 +27,55 @@ describe GradebookExporter do
     course_with_teacher(course: @course, active_all: true)
   end
 
+  def enable_final_grade_override!
+    @course.enable_feature!(:final_grades_override)
+    @course.update!(allow_final_grade_override: true)
+  end
+
+  def enable_grading_period_in_column_headers!
+    Account.site_admin.enable_feature!(:gradebook_csv_headers_include_grading_period)
+  end
+
   describe "#to_csv" do
     def exporter(opts = {})
       GradebookExporter.new(@course, @teacher, opts)
+    end
+
+    describe "assignment group order" do
+      before(:once) do
+        student_in_course(course: @course, active_all: true)
+
+        # The assignment groups are created out of order on purpose. The old code would order by assignment_group.id, so
+        # by creating the assignment groups out of order, we should get ids that are out of order. The new code orders
+        # using assignment_group.position which is guaranteed to be there in the model.
+        @first_group = @course.assignment_groups.create!(name: "first group", position: 1)
+        @last_group = @course.assignment_groups.create!(name: "last group", position: 3)
+        @second_group = @course.assignment_groups.create!(name: "second group", position: 2)
+
+        @assignments = []
+        @assignments[0] = @course.assignments.create!(name: "First group assignment", assignment_group: @first_group)
+        @assignments[2] = @course.assignments.create!(name: "last group assignment", assignment_group: @last_group)
+        @assignments[1] = @course.assignments.create!(name: "second group assignment", assignment_group: @second_group)
+      end
+
+      it "returns assignments ordered first by assignment group position" do
+        csv = GradebookExporter.new(@course, @teacher).to_csv
+        rows = CSV.parse(csv, headers: true)
+
+        # Our assignments should be columns 4, 5, and 6
+        assignment_headers = rows.headers[4,3]
+        expected_headers = @assignments.map { |a| "#{a.name} (#{a.id})" }
+
+        expect(assignment_headers).to eq(expected_headers)
+      end
+
+      it "includes a column for anonymized assignments" do
+        @assignments[0].update!(anonymous_grading: true)
+        csv = GradebookExporter.new(@course, @teacher).to_csv
+        headers = CSV.parse(csv, headers: true).headers
+
+        expect(headers).to include(/First group assignment/)
+      end
     end
 
     describe "custom columns" do
@@ -69,6 +117,15 @@ describe GradebookExporter do
 
       subject(:csv) { exporter.to_csv }
 
+      let(:expected_headers) do
+        [
+          "Student", "ID", "SIS Login ID", "Section", "Custom Column 1", "Custom Column 2",
+          "Current Points", "Final Points",
+          "Current Score", "Unposted Current Score", "Final Score", "Unposted Final Score",
+          "Current Grade", "Unposted Current Grade", "Final Grade", "Unposted Final Grade"
+        ]
+      end
+
       it { is_expected.to be_a String }
 
       it "is a csv with two rows" do
@@ -81,16 +138,67 @@ describe GradebookExporter do
       end
 
       it "has headers in a default order" do
-        expected_headers = [
-          "Student", "ID", "SIS Login ID", "Section", "Custom Column 1", "Custom Column 2",
-          "Current Points", "Final Points",
-          "Current Score", "Unposted Current Score", "Final Score", "Unposted Final Score",
-          "Current Grade", "Unposted Current Grade", "Final Grade", "Unposted Final Grade"
-        ]
-
         actual_headers = CSV.parse(csv, headers: true).headers
-
         expect(actual_headers).to match_array(expected_headers)
+      end
+
+      context "when Final Grade Override is enabled" do
+        before(:once) { enable_final_grade_override! }
+        let_once(:override_headers) { expected_headers.push("Override Score") }
+
+        it "includes the Override Score and Override Grade headers when the course has a grading standard" do
+          actual_headers = CSV.parse(csv, headers: true).headers
+          expect(actual_headers).to match_array(override_headers.push("Override Grade"))
+        end
+
+        it "omits the Override Grade header when the course lacks a grading standard" do
+          @course.update!(grading_standard_id: nil)
+          actual_headers = CSV.parse(exporter.to_csv, headers: true).headers
+          expect(actual_headers).not_to include("Override Grade")
+        end
+
+        describe "read-only indicator for Override Score" do
+          let(:parsed_csv) { CSV.parse(exporter.to_csv, headers: true) }
+          let(:read_only_row) { parsed_csv[0] }
+
+          it "is omitted if importing override scores is enabled" do
+            Account.site_admin.enable_feature!(:import_override_scores_in_gradebook)
+            expect(read_only_row["Override Score"]).to eq nil
+          end
+
+          it "is included if importing override scores is not enabled" do
+            expect(read_only_row["Override Score"]).to eq "(read only)"
+          end
+        end
+      end
+
+      context "when Final Grade Override is not enabled" do
+        before(:once) do
+          @course.enable_feature!(:final_grades_override)
+          @course.update!(allow_final_grade_override: false)
+        end
+
+        it "excludes the Override Score headers" do
+          actual_headers = CSV.parse(csv, headers: true).headers
+          expect(actual_headers).not_to include("Override Grade")
+        end
+
+        it "excludes the Override Grade headers when the course has a grading standard" do
+          actual_headers = CSV.parse(csv, headers: true).headers
+          expect(actual_headers).not_to include("Override Score")
+        end
+      end
+
+      context "when Final Grade Override is not enabled" do
+        it "excludes the Override Score headers" do
+          actual_headers = CSV.parse(csv, headers: true).headers
+          expect(actual_headers).not_to include("Override Grade")
+        end
+
+        it "excludes the Override Grade headers when the course has a grading standard" do
+          actual_headers = CSV.parse(csv, headers: true).headers
+          expect(actual_headers).not_to include("Override Score")
+        end
       end
 
       describe "byte-order mark" do
@@ -130,12 +238,66 @@ describe GradebookExporter do
           expect(header_row_length).to eq muted_row_length
         end
 
+        it "the length of the 'muted' row matches the length of the header row when integration_ids are passed" do
+          @exporter_options[:include_sis_id] = true
+          @course.root_account.settings[:include_integration_ids_in_gradebook_exports] = true
+          @course.root_account.save!
+          expect(header_row_length).to eq muted_row_length
+        end
+
         it "the length of the 'muted' row matches the length of the header row when include_sis_id " \
           "is true and the account is a trust account" do
           expect(@course.root_account).to receive(:trust_exists?).and_return(true)
           @exporter_options[:include_sis_id] = true
           expect(header_row_length).to eq muted_row_length
         end
+      end
+
+      context "when at least one assignment is manually-posted" do
+        let_once(:manual_assignment) { @course.assignments.create!(title: "manual") }
+        let_once(:manual_header) { "manual (#{manual_assignment.id})" }
+        let_once(:auto_assignment) { @course.assignments.create!(title: "auto") }
+        let_once(:auto_header) { "auto (#{auto_assignment.id})" }
+
+        let(:csv) do
+          unparsed_csv = GradebookExporter.new(@course, @teacher, {}).to_csv
+          CSV.parse(unparsed_csv, headers: true)
+        end
+
+        before(:once) do
+          manual_assignment.ensure_post_policy(post_manually: true)
+          auto_assignment.ensure_post_policy(post_manually: false)
+        end
+
+        let(:manual_posting_row) { csv[0] }
+
+        it "includes a line consisting entirely of 'Manual Posting' or empty values" do
+          expect(manual_posting_row.fields.uniq).to contain_exactly(nil, "Manual Posting")
+        end
+
+        it "designates manually-posted assignments as 'Manual Posting'" do
+          expect(manual_posting_row[manual_header]).to eq "Manual Posting"
+        end
+
+        it "has a special designation for anonymous unposted assignments" do
+          course_with_student(course: @course, active_all: true)
+          manual_assignment.update!(anonymous_grading: true)
+          expect(manual_posting_row[manual_header]).to eq "Manual Posting (scores hidden from instructors)"
+        end
+
+        it "emits an empty value for auto-posted assignments" do
+          expect(manual_posting_row[auto_header]).to be nil
+        end
+      end
+
+      it "omits the 'Manual Posting' row if no assignments are manually-posted" do
+        unparsed_csv = GradebookExporter.new(@course, @teacher, {}).to_csv
+        csv = CSV.parse(unparsed_csv, headers: true)
+
+        auto_assignment = @course.assignments.create!(title: "auto")
+        auto_assignment.ensure_post_policy(post_manually: false)
+
+        expect(csv[0].fields).not_to include("Manual Posting")
       end
     end
 
@@ -152,13 +314,13 @@ describe GradebookExporter do
         @teacher.enable_feature!(:autodetect_field_separators_for_gradebook_exports)
         @course.assignments.create!(title: "Verkefni 1", points_possible: 8.5)
         csv = exporter(locale: :is).to_csv
-        expect(csv).to match(/;8,5;/)
+        expect(csv).to match(/;8,50;/)
       end
 
       it "uses comma as the column separator when not asked to autodetect" do
         @course.assignments.create!(title: "Verkefni 1", points_possible: 8.5)
         csv = exporter(locale: :is).to_csv
-        expect(csv).to match(/,"8,5",/)
+        expect(csv).to match(/,"8,50",/)
       end
 
       it "prepends byte order mark with UTF-8 encoding when the user enables it" do
@@ -178,8 +340,8 @@ describe GradebookExporter do
       describe "grades" do
         before :each do
           @assignment = @course.assignments.create!(title: 'Verkefni 1', points_possible: 10, grading_type: 'gpa_scale')
-          student = student_in_course(course: @course, active_all: true).user
-          @assignment.grade_student(student, grader: @teacher, score: 7.5)
+          @student = student_in_course(course: @course, active_all: true).user
+          @assignment.grade_student(@student, grader: @teacher, score: 7.5)
         end
 
         context 'when forcing the field separator to be a semicolon' do
@@ -190,7 +352,7 @@ describe GradebookExporter do
           end
 
           it "localizes numbers" do
-            expect(@icsv[1]['Assignments Current Points']).to eq('7,5')
+            expect(@icsv[1]['Assignments Current Points']).to eq('7,50')
           end
 
           it "does not localize grading scheme grades for assignments" do
@@ -215,7 +377,7 @@ describe GradebookExporter do
             end
 
             it "localizes numbers" do
-              expect(@icsv[1]['Assignments Current Points']).to eq('7,5')
+              expect(@icsv[1]['Assignments Current Points']).to eq('7,50')
             end
 
             it "does not localize grading scheme grades for assignments" do
@@ -235,7 +397,7 @@ describe GradebookExporter do
             end
 
             it "localizes numbers" do
-              expect(@icsv[1]['Assignments Current Points']).to eq('7,5')
+              expect(@icsv[1]['Assignments Current Points']).to eq('7,50')
             end
 
             it "does not localize grading scheme grades for assignments" do
@@ -246,6 +408,15 @@ describe GradebookExporter do
               expect(@icsv[1]["Final Grade"]).to eq('C')
             end
           end
+        end
+
+        it "rounds scores to two decimal places" do
+          @assignment.update!(grading_type: 'points')
+          @assignment.grade_student(@student, grader: @teacher, score: 7.555)
+          csv = exporter.to_csv
+          parsed_csv = CSV.parse(csv, headers: true)
+
+          expect(parsed_csv[1]["#{@assignment.title} (#{@assignment.id})"]).to eq "7.56"
         end
       end
     end
@@ -306,6 +477,16 @@ describe GradebookExporter do
             expect(final_grade).to eq 20
           end
 
+          it "includes the grading period in column headers when the relevant feature flag is enabled" do
+            enable_grading_period_in_column_headers!
+
+            csv = exporter(grading_period_id: @last_period.id).to_csv
+            rows = CSV.parse(csv, headers: true)
+
+            final_grade = rows[1]["Final Score (present day, present time)"].try(:to_f)
+            expect(final_grade).to eq 20
+          end
+
           it "does not export assignments without due date" do
             @grading_period_id = @first_period.id
             @csv = exporter(grading_period_id: @grading_period_id).to_csv
@@ -355,13 +536,10 @@ describe GradebookExporter do
         student1_enrollment.deactivate
         student2_enrollment.deactivate
 
-        @teacher.preferences[:gradebook_settings] = {
-          @course.id => {
-            'show_inactive_enrollments' => 'true',
-            'show_concluded_enrollments' => 'false'
-          }
-        }
-        @teacher.save!
+        @teacher.set_preference(:gradebook_settings, @course.global_id, {
+          'show_inactive_enrollments' => 'true',
+          'show_concluded_enrollments' => 'false'
+        })
       end
 
       it "includes inactive students" do
@@ -375,17 +553,14 @@ describe GradebookExporter do
         rows = CSV.parse(csv, headers: true)
         assignment_data_first_student = rows[1].find { |column_info| column_info.first.include? "assmt" }
         assignment_data_second_student = rows[2].find { |column_info| column_info.first.include? "assmt" }
-        expect([assignment_data_first_student.second, assignment_data_second_student.second]).to match_array(["1.0", "2.0"])
+        expect([assignment_data_first_student.second, assignment_data_second_student.second]).to match_array(["1.00", "2.00"])
       end
 
       it "does not include inactive students if show inactive enrollments is set to false" do
-        @teacher.preferences[:gradebook_settings] = {
-          @course.id => {
-            'show_inactive_enrollments' => 'false',
-            'show_concluded_enrollments' => 'false'
-          }
-        }
-        @teacher.save!
+        @teacher.set_preference(:gradebook_settings, @course.global_id, {
+          'show_inactive_enrollments' => 'false',
+          'show_concluded_enrollments' => 'false'
+        })
         csv = exporter.to_csv
         rows = CSV.parse(csv, headers: true)
         expect([rows[1], rows[2]]).to match_array([nil, nil])
@@ -398,6 +573,73 @@ describe GradebookExporter do
       assignment.update_attribute(:position, nil)
 
       expect { exporter.to_csv }.not_to raise_error
+    end
+
+    describe "column headers" do
+      before(:once) do
+        enable_final_grade_override!
+
+        group = Factories::GradingPeriodGroupHelper.new.create_for_account(@course.root_account)
+        group.grading_periods.create!(
+          start_date: 6.weeks.ago,
+          end_date: 3.weeks.ago,
+          title: "past grading period"
+        )
+        @last_grading_period = group.grading_periods.create!(
+          start_date: 3.weeks.ago,
+          end_date: 3.weeks.from_now,
+          title: "present day, present time"
+        )
+
+        enrollment_term = @course.root_account.enrollment_terms.create!(grading_period_group: group)
+        @course.update!(enrollment_term: enrollment_term)
+
+        assignment_group = @course.assignment_groups.create!(name: "my group")
+        @course.assignments.create!(
+          assignment_group: assignment_group,
+          due_at: 1.day.after(@last_grading_period.start_date),
+          title: "my assignment"
+        )
+      end
+
+      let(:exporter) do
+        GradebookExporter.new(@course, @teacher, { grading_period_id: @last_grading_period.id })
+      end
+      let(:exported_headers) { CSV.parse(exporter.to_csv, headers: true).headers }
+
+      let(:total_columns) do
+        [
+          "Current Points", "Final Points",
+          "Current Grade", "Unposted Current Grade", "Final Grade", "Unposted Final Grade",
+          "Current Score", "Unposted Current Score", "Final Score", "Unposted Final Score"
+        ]
+      end
+      let(:total_and_override_columns) { total_columns + ["Override Score", "Override Grade"] }
+
+      context "when adding grading periods to headers" do
+        before(:each) { enable_grading_period_in_column_headers! }
+
+        it "appends the grading period to overall total and override columns" do
+          columns_with_grading_period = total_and_override_columns.map do |column|
+            "#{column} (present day, present time)"
+          end
+
+          expect(exported_headers).to include(*columns_with_grading_period)
+        end
+
+        it "appends the grading period to assignment group total columns" do
+          aggregate_failures do
+            expect(exported_headers).to include("my group Current Score (present day, present time)")
+            expect(exported_headers).not_to include("my group Current Score")
+          end
+        end
+      end
+
+      context "when not adding grading periods to headers" do
+        it "does not append the grading period to column headers" do
+          expect(exported_headers).not_to include(a_string_including("(present day, present time)"))
+        end
+      end
     end
   end
 
@@ -419,17 +661,52 @@ describe GradebookExporter do
     end
   end
 
+  context "when a course has anonymous assignments" do
+    before(:each) do
+      @student = User.create!
+      student_in_course(user: @student, course: @course, active_all: true)
+      @assignment = @course.assignments.create!(title: "Anon Assignment", points_possible: 10, anonymous_grading: true)
+      @assignment.ensure_post_policy(post_manually: true)
+      @assignment.grade_student(@student, grade: 8, grader: @teacher)
+    end
+
+    let(:submission_score) do
+      csv = GradebookExporter.new(@course, @teacher, {}).to_csv
+      rows = CSV.parse(csv, headers: true)
+      rows[2]["Anon Assignment (#{@assignment.id})"]
+    end
+
+    it "shows 'N/A' for submission scores in the export when the assignment is unposted" do
+      expect(submission_score).to eq "N/A"
+    end
+
+    it "shows actual submission scores in the export when the assignment is posted" do
+      @assignment.post_submissions
+      expect(submission_score).to eq "8.00"
+    end
+  end
+
   context "when a course has unposted assignments" do
     let(:posted_assignment) { @course.assignments.create!(title: "Posted", points_possible: 10) }
-    let(:unposted_assignment) { @course.assignments.create!(title: "Unposted", points_possible: 10, muted: true) }
+    let(:unposted_assignment) { @course.assignments.create!(title: "Unposted", points_possible: 10) }
+    let(:unposted_anonymous_assignment) do
+      @course.assignments.create!(title: "Unposted Anon", points_possible: 10, anonymous_grading: true)
+    end
 
     before(:each) do
       @course.assignments.create!(title: "Ungraded", points_possible: 10)
+
+      posted_assignment.ensure_post_policy(post_manually: true)
+      unposted_assignment.ensure_post_policy(post_manually: true)
+      unposted_anonymous_assignment.ensure_post_policy(post_manually: true)
 
       student_in_course active_all: true
 
       posted_assignment.grade_student @student, grade: 9, grader: @teacher
       unposted_assignment.grade_student @student, grade: 3, grader: @teacher
+      unposted_anonymous_assignment.grade_student @student, grade: 1, grader: @teacher
+
+      posted_assignment.post_submissions
     end
 
     it "calculates assignment group scores correctly" do
@@ -456,7 +733,7 @@ describe GradebookExporter do
   context "with weighted assignment groups" do
     before(:once) do
       student_in_course active_all: true
-      @course.update_attributes(group_weighting_scheme: 'percent')
+      @course.update(group_weighting_scheme: 'percent')
 
       first_group = @course.assignment_groups.create!(name: "First Group", group_weight: 0.5)
       @course.assignment_groups.create!(name: "Second Group", group_weight: 0.5)
@@ -550,6 +827,76 @@ describe GradebookExporter do
         expect(enrollment).to receive(:unposted_final_grade).with({ grading_period_id: grading_period.id })
         exporter.to_csv
       end
+
+      context "when final grade override is enabled for the course" do
+        before(:each) { enable_final_grade_override! }
+
+        let(:parsed_csv) { CSV.parse(exporter.to_csv, headers: true) }
+
+        it "includes the overridden score for the current grading period" do
+          aggregate_failures do
+            expect(enrollment).to receive(:override_score).with({ grading_period_id: grading_period.id }).and_return(64)
+            expect(parsed_csv[1]["Override Score"]).to eq("64")
+          end
+        end
+
+        it "includes the overridden grade for the current grading period if the course has a grading standard" do
+          aggregate_failures do
+            expect(enrollment).to receive(:override_grade).with({ grading_period_id: grading_period.id }).and_return("D")
+            expect(parsed_csv[1]["Override Grade"]).to eq("D")
+          end
+        end
+
+        it "omits the overridden grade for the current grading period if the course has no grading standard" do
+          @course.update!(grading_standard_id: nil)
+
+          aggregate_failures do
+            expect(enrollment).not_to receive(:override_grade)
+            expect(parsed_csv.headers).not_to include("Override Grade")
+          end
+        end
+      end
+
+      context "when final grade override is not allowed for the course" do
+        before(:each) do
+          @course.enable_feature!(:final_grades_override)
+          @course.update!(allow_final_grade_override: false)
+        end
+
+        let(:parsed_csv) { CSV.parse(exporter.to_csv, headers: true) }
+
+        it "does not include the overridden score for the current grading period" do
+          aggregate_failures do
+            expect(enrollment).not_to receive(:override_score)
+            expect(parsed_csv.headers).not_to include("Override Score")
+          end
+        end
+
+        it "does not include the overridden grade for the current grading period" do
+          aggregate_failures do
+            expect(enrollment).not_to receive(:override_grade)
+            expect(parsed_csv.headers).not_to include("Override Grade")
+          end
+        end
+      end
+
+      context "when final grade override is not enabled for the course" do
+        let(:parsed_csv) { CSV.parse(exporter.to_csv, headers: true) }
+
+        it "does not include the overridden score for the current grading period" do
+          aggregate_failures do
+            expect(enrollment).not_to receive(:override_score)
+            expect(parsed_csv.headers).not_to include("Override Score")
+          end
+        end
+
+        it "does not include the overridden grade for the current grading period" do
+          aggregate_failures do
+            expect(enrollment).not_to receive(:override_grade)
+            expect(parsed_csv.headers).not_to include("Override Grade")
+          end
+        end
+      end
     end
 
     context "when no grading period is supplied" do
@@ -597,6 +944,75 @@ describe GradebookExporter do
       it 'includes the unposted final grade for the course' do
         expect(enrollment).to receive(:unposted_final_grade).with(Score.params_for_course)
         exporter.to_csv
+      end
+
+      context "when final grade override is enabled for the course" do
+        before(:each) { enable_final_grade_override! }
+
+        let(:parsed_csv) { CSV.parse(exporter.to_csv, headers: true) }
+
+        it "includes the overridden score for the course" do
+          aggregate_failures do
+            expect(enrollment).to receive(:override_score).with(Score.params_for_course).and_return(78)
+            expect(parsed_csv[1]["Override Score"]).to eq("78")
+          end
+        end
+
+        it "includes the overridden grade for the course" do
+          aggregate_failures do
+            expect(enrollment).to receive(:override_grade).with(Score.params_for_course).and_return("C+")
+            expect(parsed_csv[1]["Override Grade"]).to eq("C+")
+          end
+        end
+
+        it "omits the overridden grade for the course if the course has no grading standard" do
+          @course.update!(grading_standard_id: nil)
+          aggregate_failures do
+            expect(enrollment).not_to receive(:override_grade)
+            expect(parsed_csv.headers).not_to include("Override Grade")
+          end
+        end
+      end
+
+      context "when final grade override is not allowed for the course" do
+        before(:each) do
+          @course.enable_feature!(:final_grades_override)
+          @course.update!(allow_final_grade_override: false)
+        end
+
+        let(:parsed_csv) { CSV.parse(exporter.to_csv, headers: true) }
+
+        it "does not include the overridden score for the course" do
+          aggregate_failures do
+            expect(enrollment).not_to receive(:override_score)
+            expect(parsed_csv.headers).not_to include("Override Score")
+          end
+        end
+
+        it "does not include the overridden grade for the course" do
+          aggregate_failures do
+            expect(enrollment).not_to receive(:override_grade)
+            expect(parsed_csv.headers).not_to include("Override Grade")
+          end
+        end
+      end
+
+      context "when final grade override is not enabled for the course" do
+        let(:parsed_csv) { CSV.parse(exporter.to_csv, headers: true) }
+
+        it "does not include the overridden score for the course" do
+          aggregate_failures do
+            expect(enrollment).not_to receive(:override_score)
+            expect(parsed_csv.headers).not_to include("Override Score")
+          end
+        end
+
+        it "does not include the overridden grade for the course" do
+          aggregate_failures do
+            expect(enrollment).not_to receive(:override_grade)
+            expect(parsed_csv.headers).not_to include("Override Grade")
+          end
+        end
       end
     end
   end

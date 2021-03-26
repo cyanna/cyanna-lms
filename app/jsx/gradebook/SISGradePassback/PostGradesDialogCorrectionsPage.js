@@ -19,8 +19,8 @@
 import _ from 'underscore'
 import I18n from 'i18n!modules'
 import React from 'react'
-import assignmentUtils from '../../gradebook/SISGradePassback/assignmentUtils'
-import AssignmentCorrectionRow from '../../gradebook/SISGradePassback/AssignmentCorrectionRow'
+import assignmentUtils from './assignmentUtils'
+import AssignmentCorrectionRow from './AssignmentCorrectionRow'
 
 class PostGradesDialogCorrectionsPage extends React.Component {
   componentDidMount() {
@@ -135,7 +135,8 @@ class PostGradesDialogCorrectionsPage extends React.Component {
               onClick={this.ignoreErrorsThenProceed}
             >
               {errorCount > 0 ? I18n.t('Ignore These') : I18n.t('Continue')}
-              &nbsp;<i className="icon-arrow-right" />
+              &nbsp;
+              <i className="icon-arrow-right" />
             </button>
           </div>
         </form>

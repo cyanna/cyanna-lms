@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -18,7 +20,7 @@
 require_relative "../../common"
 require_relative "../pages/global_grades_page"
 require_relative "../pages/student_grades_page"
-require_relative "../pages/gradebook_page"
+require_relative "../pages/gradebook_cells_page"
 require_relative "../pages/student_interactions_report_page"
 
 describe 'Global Grades' do
@@ -31,7 +33,6 @@ describe 'Global Grades' do
   SCORE5 = 47
 
   before(:once) do
-
     now = Time.zone.now
 
     # create a second term
@@ -138,7 +139,7 @@ describe 'Global Grades' do
       # verify url has correct course id
       expect(driver.current_url).to eq app_url + "/courses/#{@course_with_gp.id}/grades/#{@student.id}"
       # verify assignment score is correct
-      expect(StudentGradesPage.final_grade.text).to eq(course_score)
+      expect(StudentGradesPage.final_grade.text.strip).to eq(course_score)
     end
 
     it 'show score for grading period', priority: "1", test_id: 3501070 do
@@ -183,11 +184,11 @@ describe 'Global Grades' do
       # verify url has correct course id
       expect(driver.current_url).to eq app_url + "/courses/#{@course_with_gp.id}/gradebook"
       # verify assignment score is correct
-      expect(Gradebook.student_total_grade(@student)).to eq("#{GRADE_CURRENT_GP.round(2)}%")
+      expect(Gradebook::Cells.get_total_grade(@student)).to eq("#{GRADE_CURRENT_GP.round(2)}%")
     end
 
     it 'goes to student interactions report', priority: "1", test_id: 3500433 do
-      GlobalGrades.click_report_link(@course_with_gp)
+      wait_for_new_page_load{ GlobalGrades.click_report_link(@course_with_gp) }
 
       expect(StudentInteractionsReport.report).to be_displayed
       # verify current score

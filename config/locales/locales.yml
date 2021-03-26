@@ -41,6 +41,29 @@ ar:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  proper_noun_singular_genitive: "%{noun}"
+ca:
+  bigeasy_locale: ca_ES
+  dow_offset: 1
+  locales:
+    ca: Català
+  date:
+    formats:
+      default: '%d/%m/%Y'
+  number:
+    currency:
+      format:
+        delimiter: "."
+        separator: ","
+    format:
+      delimiter: "."
+      separator: ","
+  helpers:
+    accessible_date_only_format: "DD/MM/YYYY"
+    accessible_date_format: "DD/MM/YYYY hh:mm"
+  # this is for accessibleDateFormat.js
+  yyyy_mm_dd_hh_mm_a01b6081: "DD/MM/YYYY hh:mm"
+  proper_noun_singular_genitive: de %{noun}
 cy:
   locales:
     cy: Cymraeg
@@ -81,6 +104,7 @@ cy:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  proper_noun_singular_genitive: "%{noun}-"
 da:
   bigeasy_locale: da_DK
   date:
@@ -121,6 +145,15 @@ da:
     formats:
       tiny: "%k.%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: "."
+        separator: ","
+    format:
+      delimiter: "."
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}s"
 da-x-k12:
   bigeasy_locale: da_DK
   date:
@@ -163,6 +196,15 @@ da-x-k12:
     formats:
       tiny: "%k.%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: "."
+        separator: ","
+    format:
+      delimiter: "."
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}s"
 de:
   bigeasy_locale: de_DE
   date:
@@ -203,6 +245,15 @@ de:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: "."
+        separator: ","
+    format:
+      delimiter: "."
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}s"
 el:
   bigeasy_locale: el_GR
   crowdsourced: true
@@ -244,6 +295,15 @@ el:
     formats:
       tiny: "%l:%M%P"
       tiny_on_the_hour: "%l%P"
+  number:
+    currency:
+      format:
+        delimiter: "."
+        separator: ","
+    format:
+      delimiter: "."
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}"
 en:
   bigeasy_locale: en_US
   locales:
@@ -404,6 +464,7 @@ es:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  proper_noun_singular_genitive: de %{noun}
 fa:
   bigeasy_locale: fa_IR
   crowdsourced: true
@@ -446,6 +507,48 @@ fa:
     formats:
       tiny: "%l:%M%P"
       tiny_on_the_hour: "%l%P"
+  proper_noun_singular_genitive: "%{noun}"
+fi:
+  bigeasy_locale: fi_FI
+  date:
+    abbr_month_names:
+      -
+      - tammi
+      - helmi
+      - maalis
+      - huhti
+      - touko
+      - kesä
+      - heinä
+      - elo
+      - syys
+      - loka
+      - marras
+      - joulu
+    formats:
+      default: "%Y-%m-%d"
+      short: "%b %-d"
+      long: "%B %-d, %Y"
+      weekday: "%A"
+      short_weekday: "%a"
+      medium_with_weekday: "%a %b %-d, %Y"
+      long_with_weekday: "%A, %B %-d"
+      medium: "%b %-d, %Y"
+      short_with_weekday: "%a, %b %-d"
+      short_month: "%b"
+      medium_month: "%b %Y"
+      date_at_time: "%b %-d kohteessa %k:%M"
+      full: "%b %-d, %Y %k:%M"
+      full_with_weekday: "%a %b %-d, %Y %k:%M"
+  dow_offset: 1
+  locales:
+    fi: Suomi
+  time:
+    event: "%{date} kohteessa %{time}"
+    formats:
+      tiny: "%k:%M"
+      tiny_on_the_hour: "%k%M"
+  proper_noun_singular_genitive: "%{noun}"
 fr:
   bigeasy_locale: fr_FR
   date:
@@ -486,6 +589,15 @@ fr:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: de %{noun}
 fr-CA:
   bigeasy_locale: fr_CA
   date:
@@ -526,6 +638,15 @@ fr-CA:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: de %{noun}
 he:
   bigeasy_locale: he_IL
   crowdsourced: true
@@ -567,6 +688,7 @@ he:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  proper_noun_singular_genitive: "%{noun}"
 ht:
   bigeasy_locale: ht_HT
   date:
@@ -608,6 +730,15 @@ ht:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}"
 hu:
   bigeasy_locale: hu_HU
   crowdsourced: true
@@ -649,6 +780,15 @@ hu:
     formats:
       tiny: "%H:%M "
       tiny_on_the_hour: "%H:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}"
 hy:
   bigeasy_locale: hy_AM
   crowdsourced: true
@@ -692,6 +832,7 @@ hy:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  proper_noun_singular_genitive: "%{noun}-ի"
 is:
   bigeasy_locale: is_IS
   date:
@@ -732,6 +873,15 @@ is:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: "."
+        separator: ","
+    format:
+      delimiter: "."
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}"
 it:
   bigeasy_locale: it_IT
   date:
@@ -772,6 +922,15 @@ it:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: "."
+        separator: ","
+    format:
+      delimiter: "."
+      separator: ","
+  proper_noun_singular_genitive: di %{noun}
 ja:
   bigeasy_locale: ja_JP
   date:
@@ -811,6 +970,7 @@ ja:
     formats:
       tiny: "%k.%M"
       tiny_on_the_hour: "%k.%M"
+  proper_noun_singular_genitive: "%{noun}"
 ko:
   bigeasy_locale: ko_KR
   crowdsourced: true
@@ -857,6 +1017,7 @@ ko:
     formats:
       tiny: "%P %l:%M"
       tiny_on_the_hour: "%l%P"
+  proper_noun_singular_genitive: "%{noun}"
 mi:
   bigeasy_locale: mi_NZ
   date:
@@ -898,6 +1059,7 @@ mi:
     formats:
       tiny: "%l:%M%P"
       tiny_on_the_hour: "%l%P"
+  proper_noun_singular_genitive: "%{noun}'s"
 nb:
   bigeasy_locale: nb_NO
   date:
@@ -938,6 +1100,15 @@ nb:
     formats:
       tiny: "%k.%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}'s"
 nb-x-k12:
   bigeasy_locale: nb_NO
   date:
@@ -980,6 +1151,15 @@ nb-x-k12:
     formats:
       tiny: "%k.%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}'s"
 nl:
   bigeasy_locale: nl_NL
   crowdsourced: false
@@ -1021,6 +1201,15 @@ nl:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: "."
+        separator: ","
+    format:
+      delimiter: "."
+      separator: ","
+  proper_noun_singular_genitive: van %{noun}
 nn:
   bigeasy_locale: nn_NO
   crowdsourced: true
@@ -1063,6 +1252,15 @@ nn:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}s"
 pl:
   bigeasy_locale: pl_PL
   date:
@@ -1103,6 +1301,15 @@ pl:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}"
 pt:
   bigeasy_locale: pt_PT
   date:
@@ -1143,6 +1350,15 @@ pt:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: de %{noun}
 pt-BR:
   date:
     abbr_month_names:
@@ -1181,6 +1397,15 @@ pt-BR:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: "."
+        separator: ","
+    format:
+      delimiter: "."
+      separator: ","
+  proper_noun_singular_genitive: de %{noun}
 ru:
   bigeasy_locale: ru_RU
   date:
@@ -1221,6 +1446,55 @@ ru:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}"
+sl:
+  bigeasy_locale: sl_SI
+  date:
+    abbr_month_names:
+    - 
+    - jan
+    - feb
+    - mar
+    - apr
+    - maj
+    - jun
+    - jul
+    - avg
+    - sep
+    - okt
+    - nov
+    - dec
+    formats:
+      date_at_time: "%b %-d pri %k:%M"
+      default: "%Y-%m-%d"
+      full: "%b %-d, %Y %k:%M"
+      full_with_weekday: "%a %b %-d, %Y %k:%M"
+      long: "%B %-d, %Y"
+      long_with_weekday: "%A, %B %-d"
+      medium: "%b %-d, %Y"
+      medium_month: "%b %Y"
+      medium_with_weekday: "%a %b %-d, %Y"
+      short: "%b %-d"
+      short_month: "%b"
+      short_weekday: "%a"
+      short_with_weekday: "%a, %b %-d"
+      weekday: "%A"
+  locales:
+    sl: Slovenščina
+  time:
+    event: "%{date} ob %{time}"
+    formats:
+      tiny: "%k:%M"
+      tiny_on_the_hour: "%k:%M"
+  proper_noun_singular_genitive: "%{noun}"
 sv:
   bigeasy_locale: sv_SE
   date:
@@ -1261,6 +1535,15 @@ sv:
     formats:
       tiny: "%k.%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}s"
 sv-x-k12:
   bigeasy_locale: sv_SE
   date:
@@ -1303,6 +1586,7 @@ sv-x-k12:
     formats:
       tiny: "%k.%M"
       tiny_on_the_hour: "%k.%M"
+  proper_noun_singular_genitive: "%{noun}s"
 tr:
   bigeasy_locale: tr_TR
   crowdsourced: true
@@ -1344,6 +1628,15 @@ tr:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%l%P"
+  number:
+    currency:
+      format:
+        delimiter: "."
+        separator: ","
+    format:
+      delimiter: "."
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}'nın"
 uk:
   bigeasy_locale: uk_UA
   crowdsourced: true
@@ -1385,6 +1678,15 @@ uk:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  number:
+    currency:
+      format:
+        delimiter: " "
+        separator: ","
+    format:
+      delimiter: " "
+      separator: ","
+  proper_noun_singular_genitive: "%{noun}"
 zh-Hans:
   aliases: zh-CN
   bigeasy_locale: zh_CN
@@ -1428,6 +1730,7 @@ zh-Hans:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  proper_noun_singular_genitive: "%{noun}"
 zh-Hant:
   aliases: zh-TW
   bigeasy_locale: zh_HK
@@ -1471,3 +1774,4 @@ zh-Hant:
     formats:
       tiny: "%k:%M"
       tiny_on_the_hour: "%k:%M"
+  proper_noun_singular_genitive: "%{noun}"

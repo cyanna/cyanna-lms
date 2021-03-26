@@ -19,78 +19,104 @@ import React from 'react'
 import _ from 'lodash'
 import $ from 'jquery'
 import axios from 'axios'
-import TreeBrowser from '@instructure/ui-tree-browser/lib/components/TreeBrowser'
-import Text from '@instructure/ui-elements/lib/components/Text'
-import Button from '@instructure/ui-buttons/lib/components/Button'
-import Mask from '@instructure/ui-overlays/lib/components/Mask'
-import Spinner from '@instructure/ui-elements/lib/components/Spinner'
-import ScreenReaderContent from '@instructure/ui-a11y/lib/components/ScreenReaderContent'
+import minimatch from 'minimatch'
+import {TreeBrowser} from '@instructure/ui-tree-browser'
+import {Text} from '@instructure/ui-elements'
+import {Spinner} from '@instructure/ui-spinner'
+import {Button} from '@instructure/ui-buttons'
+import {Mask} from '@instructure/ui-overlays'
+import {ScreenReaderContent} from '@instructure/ui-a11y'
 import splitAssetString from 'compiled/str/splitAssetString'
-import IconOpenFolderSolid from '@instructure/ui-icons/lib/Solid/IconOpenFolder'
-import IconUploadSolid from '@instructure/ui-icons/lib/Solid/IconUpload'
-import IconImageSolid from '@instructure/ui-icons/lib/Solid/IconImage'
-import { string, func } from 'prop-types';
-import { getRootFolder, uploadFile } from 'jsx/files/utils/apiFileUtils'
+import {
+  IconOpenFolderSolid,
+  IconFolderSolid,
+  IconUploadSolid,
+  IconImageSolid
+} from '@instructure/ui-icons'
+import PropTypes from 'prop-types'
+import {getRootFolder, uploadFile} from 'jsx/files/utils/apiFileUtils'
 import parseLinkHeader from '../parseLinkHeader'
-import { showFlashSuccess, showFlashError } from '../FlashAlert'
+import {showFlashSuccess, showFlashError} from '../FlashAlert'
 import natcompare from '../../../coffeescripts/util/natcompare'
-/* eslint-disable react/sort-comp */
 
 class FileBrowser extends React.Component {
   static propTypes = {
-    selectFile: func.isRequired,
-    type: string,
+    allowUpload: PropTypes.bool,
+    selectFile: PropTypes.func.isRequired,
+    contentTypes: PropTypes.arrayOf(PropTypes.string),
+    useContextAssets: PropTypes.bool
   }
 
   static defaultProps = {
-    type: '*',
+    allowUpload: true,
+    contentTypes: ['*/*'],
+    useContextAssets: true
   }
 
-  constructor (props) {
-    super(props);
+  constructor(props) {
+    super(props)
     this.state = {
       collections: {0: {collections: []}},
       items: {},
       openFolders: [],
       uploadFolder: null,
       uploading: false,
-      loadingCount: 0,
+      loadingCount: 0
     }
   }
 
-  componentDidMount () {
+  componentDidMount() {
     this.getRootFolders()
   }
 
-  getContextInfo (assetString) {
-    const contextTypeAndId = splitAssetString(ENV.context_asset_string)
-    if (contextTypeAndId[0] && contextTypeAndId[1]) {
-      const contextName = contextTypeAndId[0] === 'courses' ? I18n.t('Course files') : I18n.t('Group files')
+  getContextName(contextType) {
+    if (contextType === 'courses') {
+      return I18n.t('Course files')
+    } else {
+      return I18n.t('Group files')
+    }
+  }
+
+  getContextInfo(assetString) {
+    const contextTypeAndId = splitAssetString(assetString)
+    if (contextTypeAndId && contextTypeAndId[0] && contextTypeAndId[1]) {
+      const contextName = this.getContextName(contextTypeAndId[0])
       return {name: contextName, type: contextTypeAndId[0], id: contextTypeAndId[1]}
     }
   }
 
-  getRootFolders () {
-    const contextInfo = this.getContextInfo(ENV.context_asset_string)
-    if (contextInfo.type && contextInfo.id) {
-      this.getRootFolderData(contextInfo.type, contextInfo.id, {name: contextInfo.name})
+  getRootFolders() {
+    if (this.props.useContextAssets) {
+      this.getContextFolders()
     }
+    this.getUserFolders()
+  }
+
+  getUserFolders() {
     this.getRootFolderData('users', 'self', {name: I18n.t('My files')})
   }
 
-  increaseLoadingCount () {
-    let { loadingCount } = this.state
+  getContextFolders() {
+    if (!ENV.context_asset_string) return
+    const contextInfo = this.getContextInfo(ENV.context_asset_string)
+    if (contextInfo && contextInfo.type && contextInfo.id) {
+      this.getRootFolderData(contextInfo.type, contextInfo.id, {name: contextInfo.name})
+    }
+  }
+
+  increaseLoadingCount() {
+    let {loadingCount} = this.state
     loadingCount += 1
     this.setState({loadingCount})
   }
 
-  decreaseLoadingCount () {
-    let { loadingCount } = this.state
+  decreaseLoadingCount() {
+    let {loadingCount} = this.state
     loadingCount -= 1
     this.setState({loadingCount})
   }
 
-  getRootFolderData (context, id, opts = {}) {
+  getRootFolderData(context, id, opts = {}) {
     this.increaseLoadingCount()
     getRootFolder(context, id)
       .then(response => this.populateRootFolder(response.data, opts))
@@ -102,22 +128,23 @@ class FileBrowser extends React.Component {
       })
   }
 
-  populateRootFolder (data, opts = {}) {
+  populateRootFolder(data, opts = {}) {
     this.decreaseLoadingCount()
     this.populateCollectionsList([data], opts)
     this.getFolderData(data.id)
   }
 
-  getFolderData (id) {
-    const { collections } = this.state
+  getFolderData(id) {
+    const {collections} = this.state
     if (!collections[id].locked) {
       this.getPaginatedData(this.folderFileApiUrl(id, 'folders'), this.populateCollectionsList)
       this.getPaginatedData(this.folderFileApiUrl(id), this.populateItemsList)
     }
   }
 
-  getPaginatedData (url, callback) {
-    axios.get(url)
+  getPaginatedData(url, callback) {
+    axios
+      .get(url)
       .then(response => {
         callback(response.data)
         const nextUrl = parseLinkHeader(response.headers.link).next
@@ -125,51 +152,77 @@ class FileBrowser extends React.Component {
           this.getPaginatedData(nextUrl, callback)
         }
       })
+      .catch(error => {
+        /* eslint-disable no-console */
+        console.error('Error fetching data from API')
+        console.error(error)
+        /* eslint-enable no-console */
+      })
   }
 
-  folderFileApiUrl (folderId, type='files') {
+  folderFileApiUrl(folderId, type = 'files') {
     return `/api/v1/folders/${folderId}/${type}`
   }
 
   populateCollectionsList = (folderList, opts = {}) => {
-    const newCollections = _.cloneDeep(this.state.collections)
-    folderList.forEach((folder) => {
-      const collection = this.formatFolderInfo(folder, opts)
-      newCollections[collection.id] = collection
-      const parent_id = folder.parent_folder_id || 0
-      const collectionCollections = newCollections[parent_id].collections
-      if (!collectionCollections.includes(collection.id)) {
-        collectionCollections.push(collection.id)
-        newCollections[parent_id].collections = this.orderedIdsFromList(newCollections, collectionCollections)
-      }
-    })
-    this.setState({collections: newCollections})
-    folderList.forEach(folder => {
-      if (this.state.openFolders.includes(folder.parent_folder_id)) this.getFolderData(folder.id)
-    })
-  }
-
-  populateItemsList = (fileList) => {
-    const newItems = _.cloneDeep(this.state.items)
-    const newCollections = _.cloneDeep(this.state.collections)
-    fileList.forEach((file) => {
-      if (file["content-type"].match(new RegExp(this.props.type))) {
-        const item = this.formatFileInfo(file)
-        newItems[item.id] = item
-        const folder_id = file.folder_id
-        const collectionItems = newCollections[folder_id].items
-        if (!collectionItems.includes(item.id)) {
-          collectionItems.push(item.id)
-          newCollections[folder_id].items = this.orderedIdsFromList(newItems, collectionItems)
+    this.setState(function({collections}) {
+      const newCollections = _.cloneDeep(collections)
+      folderList.forEach(folder => {
+        const collection = this.formatFolderInfo(folder, opts)
+        newCollections[collection.id] = collection
+        const parent_id = folder.parent_folder_id || 0
+        const collectionCollections = newCollections[parent_id].collections
+        if (!collectionCollections.includes(collection.id)) {
+          collectionCollections.push(collection.id)
+          newCollections[parent_id].collections = this.orderedIdsFromList(
+            newCollections,
+            collectionCollections
+          )
         }
+      })
+      return {collections: newCollections}
+    })
+
+    folderList.forEach(folder => {
+      if (this.state.openFolders.includes(folder.parent_folder_id)) {
+        this.getFolderData(folder.id)
       }
     })
-    this.setState({items: newItems, collections: newCollections})
   }
 
-  formatFolderInfo (apiFolder, opts = {}) {
+  contentTypeIsAllowed(contentType) {
+    for (const pattern of this.props.contentTypes) {
+      if (minimatch(contentType, pattern)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  populateItemsList = fileList => {
+    this.setState(function({items, collections}) {
+      const newItems = _.cloneDeep(items)
+      const newCollections = _.cloneDeep(collections)
+      fileList.forEach(file => {
+        if (this.contentTypeIsAllowed(file['content-type'])) {
+          const item = this.formatFileInfo(file)
+          newItems[item.id] = item
+          const folder_id = file.folder_id
+          const collectionItems = newCollections[folder_id].items
+          if (!collectionItems.includes(item.id)) {
+            collectionItems.push(item.id)
+            newCollections[folder_id].items = this.orderedIdsFromList(newItems, collectionItems)
+          }
+        }
+      })
+      return {items: newItems, collections: newCollections}
+    })
+  }
+
+  formatFolderInfo(apiFolder, opts = {}) {
     const descriptor = apiFolder.locked_for_user ? I18n.t('Locked') : null
     const folder = {
+      api: apiFolder,
       id: apiFolder.id,
       collections: [],
       items: [],
@@ -181,71 +234,80 @@ class FileBrowser extends React.Component {
       ...opts
     }
     const existingCollections = this.state.collections[apiFolder.id]
-    Object.assign(folder, existingCollections && {
-      collections: existingCollections.collections,
-      items: existingCollections.items
-    })
+    Object.assign(
+      folder,
+      existingCollections && {
+        collections: existingCollections.collections,
+        items: existingCollections.items
+      }
+    )
     return folder
   }
 
-  formatFileInfo (apiFile, opts = {}) {
-    const { collections } = this.state
+  formatFileInfo(apiFile, opts = {}) {
+    const {collections} = this.state
     const context = collections[apiFile.folder_id].context
     const file = {
+      api: apiFile,
       id: apiFile.id,
       name: apiFile.display_name,
-      src: `${context}/files/${apiFile.id}/preview${context.includes('user') ? `?verifier=${apiFile.uuid}` : ''}`,
+      thumbnail: apiFile.thumbnail_url,
+      src: `${context}/files/${apiFile.id}/preview${
+        context.includes('user') ? `?verifier=${apiFile.uuid}` : ''
+      }`,
       alt: apiFile.display_name,
       ...opts
     }
     return file
   }
 
-  orderedIdsFromList (list, ids) {
+  orderedIdsFromList(list, ids) {
     try {
       const sortedIds = ids.sort((a, b) => natcompare.strings(list[a].name, list[b].name))
       return sortedIds
-    }
-    catch(error) {
+    } catch (error) {
+      // eslint-disable-next-line no-console
       console.error(error)
       return ids
     }
   }
 
-  onFolderClick = (folderId) => {
+  onFolderToggle = folder => {
+    return this.onFolderClick(folder.id, folder)
+  }
+
+  onFolderClick = (folderId, _folder) => {
     const collection = this.state.collections[folderId]
     let newFolders = []
-    const { openFolders } = this.state
+    const {openFolders} = this.state
     if (!collection.locked && openFolders.includes(folderId)) {
       newFolders = newFolders.concat(openFolders.filter(id => id !== folderId))
     } else if (!collection.locked) {
       newFolders = newFolders.concat(openFolders)
       newFolders.push(folderId)
-      collection.collections.forEach(folder => this.getFolderData(folder))
+      collection.collections.forEach(id => this.getFolderData(id))
     }
     return this.setState({openFolders: newFolders, uploadFolder: folderId})
   }
 
-  onFileClick = (file) => {
+  onFileClick = file => {
     const folder = this.findFolderForFile(file)
     this.setState({uploadFolder: folder && folder.id})
     this.props.selectFile(this.state.items[file.id])
   }
 
-  onInputChange = (files) => {
+  onInputChange = files => {
     if (files) {
       this.submitFile(files[0])
     }
   }
 
-  submitFile = (file) => {
+  submitFile = file => {
     this.setState({uploading: true})
-    uploadFile(file, this.state.uploadFolder,
-      this.onUploadSucceed,
-      this.onUploadFail)
+    uploadFile(file, this.state.uploadFolder, this.onUploadSucceed, this.onUploadFail)
   }
 
-  onUploadSucceed = (response) => {
+  onUploadSucceed = response => {
     this.populateItemsList([response])
     this.clearUploadInfo()
     const folder = this.state.collections[response.folder_id]
@@ -258,9 +320,9 @@ class FileBrowser extends React.Component {
     button.click()
   }
 
-  findFolderForFile (file) {
-    const { collections}  = this.state
-    const folderKey = Object.keys(collections).find((key) => {
+  findFolderForFile(file) {
+    const {collections} = this.state
+    const folderKey = Object.keys(collections).find(key => {
       const items = collections[key].items
       if (items && items.includes(file.id)) return key
     })
@@ -272,16 +334,16 @@ class FileBrowser extends React.Component {
     this.setFailureMessage(I18n.t('File upload failed'))
   }
 
-  clearUploadInfo () {
+  clearUploadInfo() {
     this.setState({uploading: false})
     this.uploadInput.value = ''
   }
 
-  setSuccessMessage = (message) => {
+  setSuccessMessage = message => {
     showFlashSuccess(message)()
   }
 
-  setFailureMessage = (message) => {
+  setFailureMessage = message => {
     showFlashError(message)()
   }
 
@@ -289,43 +351,63 @@ class FileBrowser extends React.Component {
     this.uploadInput.click()
   }
 
-  renderUploadDialog () {
+  renderUploadDialog() {
+    if (!this.props.allowUpload) {
+      return null
+    }
     const uploadFolder = this.state.collections[this.state.uploadFolder]
     const disabled = !uploadFolder || uploadFolder.locked || !uploadFolder.canUpload
-    const srError = disabled ? <ScreenReaderContent>{I18n.t('Upload not available for this folder')}</ScreenReaderContent> : ''
+    const srError = disabled ? (
+      <ScreenReaderContent>{I18n.t('Upload not available for this folder')}</ScreenReaderContent>
+    ) : (
+      ''
+    )
+    const acceptContentTypes = this.props.contentTypes.join(',')
     return (
       <div className="image-upload__form">
         <input
-          onChange={(e) => this.onInputChange(e.target.files)}
-          ref={i => {this.uploadInput = i}}
+          onChange={e => this.onInputChange(e.target.files)}
+          ref={i => {
+            this.uploadInput = i
+          }}
           type="file"
-          accept={this.props.type}
+          accept={acceptContentTypes}
           className="hidden"
         />
-        <Button id="image-upload__upload" onClick={this.selectLocalFile} disabled={disabled} variant="ghost" icon={IconUploadSolid}>
+        <Button
+          id="image-upload__upload"
+          onClick={this.selectLocalFile}
+          disabled={disabled}
+          variant="ghost"
+          icon={IconUploadSolid}
+        >
           {I18n.t('Upload File')} {srError}
         </Button>
       </div>
     )
   }
 
-  renderMask () {
+  renderMask() {
     if (this.state.uploading) {
-      return <Mask><Spinner className="file-browser__uploading" title={I18n.t('File uploading')} /></Mask>
+      return (
+        <Mask>
+          <Spinner renderTitle={I18n.t('File uploading')} />
+        </Mask>
+      )
     } else {
       return null
     }
   }
 
-  renderLoading () {
+  renderLoading() {
     if (this.state.loadingCount > 0) {
-      return <Spinner className="file-browser__loading" title={I18n.t('Loading folders')} size="small" />
+      return <Spinner renderTitle={I18n.t('Loading folders')} size="small" />
     } else {
       return null
     }
   }
 
-  render () {
+  render() {
     const element = (
       <div className="file-browser__container">
         <Text>{I18n.t('Available folders')}</Text>
@@ -334,6 +416,7 @@ class FileBrowser extends React.Component {
             collections={this.state.collections}
             items={this.state.items}
             size="medium"
+            onCollectionToggle={this.onFolderToggle}
             onCollectionClick={this.onFolderClick}
             onItemClick={this.onFileClick}
             treeLabel={I18n.t('Folder tree')}
@@ -341,6 +424,7 @@ class FileBrowser extends React.Component {
             showRootCollection={false}
             defaultExpanded={this.state.openFolders}
             collectionIconExpanded={IconOpenFolderSolid}
+            collectionIcon={IconFolderSolid}
             itemIcon={IconImageSolid}
             selectionType="single"
           />
@@ -355,4 +439,3 @@ class FileBrowser extends React.Component {
 }
 
 export default FileBrowser
-/* eslint-enable react/sort-comp */

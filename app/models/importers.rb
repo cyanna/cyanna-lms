@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2014 - present Instructure, Inc.
 #
@@ -25,6 +27,17 @@ module Importers
     klass = @content_importers[context_type]
     raise "No content importer registered for #{context_type}" unless klass
     klass
+  end
+
+  def self.disable_live_events!
+    ActiveRecord::Base.observers.disable LiveEventsObserver
+    yield
+  ensure
+    enable_live_events!
+  end
+
+  def self.enable_live_events!
+    ActiveRecord::Base.observers.enable LiveEventsObserver
   end
 
   class Importer

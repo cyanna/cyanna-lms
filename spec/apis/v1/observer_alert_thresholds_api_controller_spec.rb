@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -54,7 +56,7 @@ describe ObserverAlertThresholdsApiController, type: :request do
       it 'returns an empty array if there arent any thresholds' do
         observer = user_model
         student = user_model
-        UserObservationLink.create(observer: observer, student: student)
+        add_linked_observer(student, observer)
         path = "/api/v1/users/#{observer.id}/observer_alert_thresholds?student_id=#{student.id}"
         params = {user_id: observer.to_param, student_id: student.to_param,
           controller: 'observer_alert_thresholds_api', action: 'index', format: 'json'}
@@ -94,7 +96,7 @@ describe ObserverAlertThresholdsApiController, type: :request do
       it 'returns an empty array if there arent any thresholds' do
         observer = user_model
         student = user_model
-        UserObservationLink.create(observer: observer, student: student)
+        add_linked_observer(student, observer)
         path = "/api/v1/users/#{observer.id}/observer_alert_thresholds"
         params = {user_id: observer.to_param, controller: 'observer_alert_thresholds_api', action: 'index', format: 'json'}
 
@@ -148,7 +150,7 @@ describe ObserverAlertThresholdsApiController, type: :request do
     before :once do
       @observer = user_model
       @student = user_model
-      @link = UserObservationLink.create(observer: @observer, student: @student)
+      add_linked_observer(@student, @observer)
       @path = "/api/v1/users/#{@observer.id}/observer_alert_thresholds"
     end
 

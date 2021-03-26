@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -19,7 +21,7 @@ module Api::V1
   class CourseJson
 
     BASE_ATTRIBUTES = %w(id name course_code account_id created_at start_at default_view enrollment_term_id is_public
-                         grading_standard_id root_account_id uuid).freeze
+                         grading_standard_id root_account_id uuid license grade_passback_setting).freeze
 
     INCLUDE_CHECKERS = {grading: 'needs_grading_count', syllabus: 'syllabus_body',
                         url: 'html_url', description: 'public_description', permissions: 'permissions'}.freeze
@@ -46,9 +48,10 @@ module Api::V1
     end
 
     def methods_to_send
-      methods = ['end_at', 'public_syllabus', 'public_syllabus_to_auth', 'storage_quota_mb', 'is_public_to_auth_users']
+      methods = ['end_at', 'public_syllabus', 'public_syllabus_to_auth', 'storage_quota_mb', 'is_public_to_auth_users', 'homeroom_course']
       methods << 'hide_final_grades' if @includes.include?(:hide_final_grades)
       methods << 'storage_quota_used_mb' if @includes.include?(:storage_quota_used_mb)
+      methods << 'account_name' if @includes.include?(:account_name)
       methods
     end
 
@@ -62,6 +65,9 @@ module Api::V1
       @hash['workflow_state'] = @course.api_state
       @hash['course_format'] = @course.course_format if @course.course_format.present?
       @hash['restrict_enrollments_to_course_dates'] = !!@course.restrict_enrollments_to_course_dates
+      if visibility = @course.overridden_course_visibility
+        @hash['overridden_course_visibility'] = visibility
+      end
       if @includes.include?(:current_grading_period_scores)
         @hash['has_grading_periods'] = @course.grading_periods?
         @hash['multiple_grading_periods_enabled'] = @hash['has_grading_periods'] # for backwards compatibility
@@ -153,23 +159,33 @@ module Api::V1
         :role => enrollment.role.name,
         :role_id => enrollment.role.id,
         :user_id => enrollment.user_id,
-        :enrollment_state => enrollment.workflow_state
+        :enrollment_state => enrollment.workflow_state,
+        :limit_privileges_to_course_section => enrollment.limit_privileges_to_course_section
       }
     end
 
     def total_scores(student_enrollment)
-      scores = {
-        :computed_current_score => student_enrollment.computed_current_score,
-        :computed_final_score => student_enrollment.computed_final_score,
-        :computed_current_grade => student_enrollment.computed_current_grade,
-        :computed_final_grade => student_enrollment.computed_final_grade
-      }
+      scores = {}
 
       if @course.grants_any_right?(@user, :manage_grades, :view_all_grades)
-        scores[:unposted_current_score] = student_enrollment.unposted_current_score
-        scores[:unposted_final_score] = student_enrollment.unposted_final_score
+        scores[:computed_current_grade] = student_enrollment.computed_current_grade
+        scores[:computed_current_score] = student_enrollment.computed_current_score
+        scores[:computed_final_grade] = student_enrollment.computed_final_grade
+        scores[:computed_final_score] = student_enrollment.computed_final_score
         scores[:unposted_current_grade] = student_enrollment.unposted_current_grade
+        scores[:unposted_current_score] = student_enrollment.unposted_current_score
         scores[:unposted_final_grade] = student_enrollment.unposted_final_grade
+        scores[:unposted_final_score] = student_enrollment.unposted_final_score
+
+        override_grade = student_enrollment.override_grade(course_score: true)
+        override_score = student_enrollment.override_score(course_score: true)
+        scores[:override_grade] = override_grade if override_grade.present?
+        scores[:override_score] = override_score if override_score.present?
+      else
+        scores[:computed_current_grade] = student_enrollment.effective_current_grade
+        scores[:computed_current_score] = student_enrollment.effective_current_score
+        scores[:computed_final_grade] = student_enrollment.effective_final_grade
+        scores[:computed_final_score] = student_enrollment.effective_final_score
       end
 
       if include_current_grading_period_scores?
@@ -205,6 +221,14 @@ module Api::V1
           grading_period_grade(student_enrollment, :current, unposted: true)
         scores[:current_period_unposted_final_grade] =
           grading_period_grade(student_enrollment, :final, unposted: true)
+
+        if current_grading_period
+          opts = { grading_period_id: current_grading_period.id }
+          override_grade = student_enrollment.override_grade(opts)
+          override_score = student_enrollment.override_score(opts)
+          scores[:current_period_override_grade] = override_grade if override_grade.present?
+          scores[:current_period_override_score] = override_score if override_score.present?
+        end
       end
       scores
     end
@@ -220,7 +244,12 @@ module Api::V1
     def grading_period_score_or_grade(enrollment, current_or_final, score_or_grade, unposted)
       return nil unless current_grading_period
 
-      prefix = unposted ? "unposted" : "computed"
+      prefix = if @course.grants_any_right?(@user, :manage_grades, :view_all_grades)
+        unposted ? "unposted" : "computed"
+      else
+        "effective"
+      end
+
       enrollment.send(
         "#{prefix}_#{current_or_final}_#{score_or_grade}",
         grading_period_id: current_grading_period.id

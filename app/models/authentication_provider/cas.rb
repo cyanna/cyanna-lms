@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -33,7 +35,7 @@ class AuthenticationProvider::CAS < AuthenticationProvider::Delegated
   end
 
   def self.supports_debugging?
-    true
+    debugging_enabled?
   end
 
   def self.debugging_sections

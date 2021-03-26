@@ -17,19 +17,53 @@
  */
 
 import React from 'react'
-import apiUserContent from 'compiled/str/apiUserContent'
-import {AssignmentShape} from '../shapes'
+import {bool, func} from 'prop-types'
+import I18n from 'i18n!asignments_2'
+
+import {TeacherAssignmentShape} from '../assignmentData'
+import AssignmentDescription from './AssignmentDescription'
+import Overrides from './Overrides/Overrides'
+import AddHorizontalRuleButton from './AddHorizontalRuleButton'
+
+import {View} from '@instructure/ui-layout'
 
 Details.propTypes = {
-  assignment: AssignmentShape.isRequired
+  assignment: TeacherAssignmentShape.isRequired,
+  onChangeAssignment: func.isRequired,
+  onValidate: func.isRequired,
+  invalidMessage: func.isRequired,
+  readOnly: bool
+}
+Details.defaultProps = {
+  readOnly: false
 }
 
 export default function Details(props) {
-  const {
-    assignment: {description}
-  } = props
-  const convertedHtml = apiUserContent.convert(description)
-
   // html is sanitized on the server side
-  return <div dangerouslySetInnerHTML={{__html: convertedHtml}} />
+  return (
+    <View as="div" margin="0">
+      <AssignmentDescription
+        text={props.assignment.description}
+        onChange={handleDescriptionChange}
+        readOnly={props.readOnly}
+      />
+      <Overrides
+        assignment={props.assignment}
+        onChangeAssignment={props.onChangeAssignment}
+        onValidate={props.onValidate}
+        invalidMessage={props.invalidMessage}
+        readOnly={props.readOnly}
+      />
+      {props.readOnly ? null : (
+        <AddHorizontalRuleButton onClick={addOverride} label={I18n.t('Add Override')} />
+      )}
+    </View>
+  )
+
+  function handleDescriptionChange(desc) {
+    props.onChangeAssignment('description', desc)
+  }
 }
+
+// TODO: the real deal
+function addOverride() {}

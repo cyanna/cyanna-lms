@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -23,7 +25,6 @@ describe "calendar2" do
   include Calendar2Common
 
   before(:each) do
-    enable_all_rcs Account.default
     Account.default.tap do |a|
       a.settings[:show_scheduler]   = true
       a.save!
@@ -33,7 +34,6 @@ describe "calendar2" do
   context "as a teacher" do
     before(:each) do
       course_with_teacher_logged_in
-      enable_all_rcs @course.account
       stub_rcs_config
     end
 

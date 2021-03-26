@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -158,6 +160,16 @@ describe CollaborationsController do
         expect(hash['collaborator_lti_id']).to eq @student.lti_context_id
       end
 
+      it "should include collaborator old_lti_id" do
+        Lti::Asset.opaque_identifier_for(@student)
+        UserPastLtiId.create!(user: @student, context: @collab.context, user_lti_id: @student.lti_id, user_lti_context_id: 'old_lti_id', user_uuid: 'old')
+        get 'members', params: {id: @collab.id, include: ['collaborator_lti_id']}
+        @student.reload
+        hash = JSON.parse(@response.body).first
+
+        expect(hash['collaborator_lti_id']).to eq 'old_lti_id'
+      end
+
       it "should include avatar_image_url" do
         @student.avatar_image_url = 'https://www.example.com/awesome-avatar.png'
         @student.save!
@@ -188,6 +200,30 @@ describe CollaborationsController do
         title: "my collab",
         user: @teacher
       ).tap{ |c| c.update_attribute :url, 'http://www.example.com' }
+    end
+
+    context "when the collaboration includes a resource_link_lookup_uuid" do
+      subject { get 'show', params: { course_id: @course.id, id: collaboration.id } }
+
+      let(:lookup_uuid) { SecureRandom.uuid }
+      let(:collaboration) do
+        ExternalToolCollaboration.create!(
+          title: "my collab",
+          user: @teacher,
+          url: 'http://www.example.com',
+          context: @course,
+          resource_link_lookup_uuid: lookup_uuid
+        )
+      end
+
+      before { user_session(@teacher) }
+
+      it 'adds the lookup ID to the redirect URL' do
+        url = CGI.escape(collaboration[:url])
+        expect(subject).to redirect_to(
+          "/courses/#{@course.id}/external_tools/retrieve?display=borderless&resource_link_lookup_id=#{lookup_uuid}&url=#{url}"
+        )
+      end
     end
 
     it 'redirects to the lti launch url for ExternalToolCollaborations' do
@@ -272,7 +308,6 @@ describe CollaborationsController do
     end
 
     context "content_items" do
-
       let(:content_items) do
         [
           {
@@ -282,6 +317,22 @@ describe CollaborationsController do
             confirmUrl: 'http://example.com/confirm/343'
           }
         ]
+      end
+
+      context "when the content item contains a lookup_uuid" do
+        subject do
+          post 'create', params: {:course_id => @course.id, :contentItems => content_items.to_json}
+          Collaboration.find(assigns[:collaboration].id)
+        end
+
+        let(:lookup_uuid) { SecureRandom.uuid }
+        let(:content_items) { super().tap { |c| c.first[:lookup_uuid] = lookup_uuid } }
+
+        before { user_session(@teacher) }
+
+        it 'sets the resource_link_lookup_uuid' do
+          expect(subject.resource_link_lookup_uuid).to eq lookup_uuid
+        end
       end
 
       it "should create a collaboration using content-item" do
@@ -366,6 +417,22 @@ describe CollaborationsController do
             confirmUrl: 'http://example.com/confirm/343'
           }
         ]
+      end
+
+      context "when the content item contains a lookup_uuid" do
+        subject do
+          put 'update', params: {id: collaboration.id, course_id: @course.id, contentItems: content_items.to_json}
+          Collaboration.find(assigns[:collaboration].id)
+        end
+
+        let(:lookup_uuid) { SecureRandom.uuid }
+        let(:content_items) { super().tap { |c| c.first[:lookup_uuid] = lookup_uuid } }
+
+        before { user_session(@teacher) }
+
+        it 'updates the resource_link_lookup_uuid' do
+          expect(subject.resource_link_lookup_uuid).to eq lookup_uuid
+        end
       end
 
       it "should update a collaboration using content-item" do

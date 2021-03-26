@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -47,9 +49,13 @@ describe RubricAssociation do
       )
     end
 
-    it 'ignore use_for_grading if hide_points enabled' do
+    it 'disable use_for_grading if hide_points enabled' do
       # Create the rubric
       @rubric = @course.rubrics.create! { |r| r.user = @teacher }
+
+      ra_params = rubric_association_params_for_assignment(@assignment, use_for_grading: '1')
+      rubric_assoc = RubricAssociation.generate(@teacher, @rubric, @course, ra_params)
+      expect(rubric_assoc.use_for_grading).to be true
 
       ra_params = rubric_association_params_for_assignment(@assignment, hide_points: '1')
       rubric_assoc = RubricAssociation.generate(@teacher, @rubric, @course, ra_params)
@@ -57,14 +63,18 @@ describe RubricAssociation do
       expect(rubric_assoc.use_for_grading).to be false
     end
 
-    it 'ignore hide_score_total if hide_points enabled' do
+    it 'disable hide_score_total if hide_points enabled' do
       # Create the rubric
       @rubric = @course.rubrics.create! { |r| r.user = @teacher }
 
-      ra_params = rubric_association_params_for_assignment(@assignment, hide_points: '1', hide_score_total: '1')
+      ra_params = rubric_association_params_for_assignment(@assignment, hide_score_total: '1')
+      rubric_assoc = RubricAssociation.generate(@teacher, @rubric, @course, ra_params)
+      expect(rubric_assoc.hide_score_total).to be true
+
+      ra_params = rubric_association_params_for_assignment(@assignment, hide_points: '1')
       rubric_assoc = RubricAssociation.generate(@teacher, @rubric, @course, ra_params)
 
-      expect(rubric_assoc.hide_score_total).to be_falsey
+      expect(rubric_assoc.hide_score_total).to be false
     end
 
     context "when a peer-review assignment has been completed AFTER rubric created" do
@@ -286,6 +296,13 @@ describe RubricAssociation do
                                              assessment: assessment_params)
       expect(assessment.hide_points).to be true
     end
+
+    it "updates the rating description and id if not present in passed params" do
+      assessment = rubric_association.assess(user: student, assessor: first_teacher, artifact: submission,
+                                             assessment: assessment_params)
+      expect(assessment.data[0][:id]).to eq 'blank'
+      expect(assessment.data[0][:description]).to eq 'Full Marks'
+    end
   end
 
   describe '#generate' do
@@ -401,6 +418,64 @@ describe RubricAssociation do
         purpose: "grading"
       )
       expect(ra).not_to be_auditable
+    end
+  end
+
+  describe 'create' do
+    let(:root_account) { Account.default }
+
+    it 'sets the root_account_id using course context' do
+      rubric_association_model
+      expect(@rubric_association.root_account_id).to eq @course.root_account_id
+    end
+
+    it 'sets the root_account_id using root account' do
+      rubric_association_model({context: root_account})
+      expect(@rubric_association.root_account_id).to eq root_account.id
+    end
+
+    it 'sets the root_account_id using sub account' do
+      sub_account = root_account.sub_accounts.create!
+      rubric_association_model({context: sub_account})
+      expect(@rubric_association.root_account_id).to eq sub_account.root_account_id
+    end
+  end
+
+  describe "workflow_state" do
+    before(:once) do
+      @course = Course.create!
+      @rubric = @course.rubrics.create!
+      @association = RubricAssociation.create!(
+        rubric: @rubric,
+        association_object: @course,
+        context: @course,
+        purpose: "bookmark"
+      )
+    end
+
+    it "is set to 'active' by default" do
+      expect(@association).to be_active
+    end
+
+    it "gets set to 'deleted' when soft-deleted" do
+      expect { @association.destroy }.to change {
+        @association.workflow_state
+      }.from("active").to("deleted")
+    end
+  end
+
+  describe "#restore" do
+    it "sets the workflow_state to 'active'" do
+      course = Course.create!
+      rubric = course.rubrics.create!
+      association = RubricAssociation.create!(
+        rubric: rubric,
+        association_object: course,
+        context: course,
+        purpose: "bookmark"
+      )
+      association.destroy
+      expect { association.restore }.to change { association.workflow_state }.from("deleted").to("active")
     end
   end
 end

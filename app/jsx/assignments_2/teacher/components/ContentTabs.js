@@ -17,24 +17,56 @@
  */
 
 import React from 'react'
-import TabList, {TabPanel} from '@instructure/ui-tabs/lib/components/TabList'
-import {AssignmentShape} from '../shapes'
+import {bool, func} from 'prop-types'
+import I18n from 'i18n!assignments_2'
+import {TabList} from '@instructure/ui-tabs'
+import {TeacherAssignmentShape} from '../assignmentData'
 import Details from './Details'
+import StudentsSearcher from './StudentsTab/StudentsSearcher'
+import {Img} from '@instructure/ui-elements'
 
 ContentTabs.propTypes = {
-  assignment: AssignmentShape.isRequired
+  assignment: TeacherAssignmentShape.isRequired,
+  onMessageStudentsClick: func.isRequired,
+  onChangeAssignment: func.isRequired,
+  onValidate: func.isRequired,
+  invalidMessage: func.isRequired,
+  readOnly: bool
+}
+
+ContentTabs.defaultProps = {
+  readOnly: false
 }
 
 export default function ContentTabs(props) {
   const {assignment} = props
   return (
     <TabList defaultSelectedIndex={0} variant="minimal">
-      <TabPanel title="Details">
-        <Details assignment={assignment} />
-      </TabPanel>
-      <TabPanel title="Students">Students</TabPanel>
-      <TabPanel title="Rubric">Rubric</TabPanel>
-      <TabPanel title="Settings">Settings</TabPanel>
+      <TabList.Panel title="Details">
+        <Details
+          assignment={assignment}
+          onChangeAssignment={props.onChangeAssignment}
+          onValidate={props.onValidate}
+          invalidMessage={props.invalidMessage}
+          readOnly={props.readOnly}
+        />
+      </TabList.Panel>
+      <TabList.Panel title={I18n.t('Grading')}>
+        <div style={{width: '680px'}}>
+          <Img src="/images/assignments2_grading_static.png" />
+        </div>
+      </TabList.Panel>
+      <TabList.Panel title={I18n.t('Rubric')}>
+        <div style={{width: '730px'}}>
+          <Img src="/images/assignments2_rubric_static.png" />
+        </div>
+      </TabList.Panel>
+      <TabList.Panel title={I18n.t('Students')}>
+        <StudentsSearcher
+          onMessageStudentsClick={props.onMessageStudentsClick}
+          assignment={assignment}
+        />
+      </TabList.Panel>
     </TabList>
   )
 }

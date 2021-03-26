@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2012 - present Instructure, Inc.
 #
@@ -50,7 +52,7 @@ describe "Sessions Timeout" do
     plugin_setting.save!
     user_with_pseudonym({:active_user => true})
     login_as
-    expect(f('[aria-label="Global navigation tray"] h2').text).to eq @user.primary_pseudonym.unique_id
+    expect(f('[aria-label="Profile tray"] h2').text).to eq @user.primary_pseudonym.unique_id
 
     Timecop.travel(Time.now + 61.seconds) do
       get "/courses"

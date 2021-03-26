@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -24,8 +26,7 @@ module Factories
     opts[:student] ||= course_with_student(opts).user
     @student = opts[:student]
 
-
-    @observation_link = opts[:link] || UserObservationLink.create!(student: @student, observer: @observer)
+    @observation_link = opts[:link] || add_linked_observer(@student, @observer, root_account: (@course || opts[:account])&.root_account)
 
     valid_attrs = [:title, :alert_type, :workflow_state, :action_date, :student, :observer]
     default_attrs = {

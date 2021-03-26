@@ -33,6 +33,7 @@ export const tierShape = {
 export const ratingShape = {
   tiers: PropTypes.arrayOf(PropTypes.shape(tierShape)).isRequired,
   points: PropTypes.number,
+  selectedRatingId: PropTypes.string,
   defaultMasteryThreshold: PropTypes.number,
   useRange: PropTypes.bool.isRequired
 }
@@ -71,5 +72,5 @@ export const rubricAssociationShape = {
 
 export const rubricAssessmentShape = {
   data: PropTypes.arrayOf(PropTypes.shape(assessmentShape)).isRequired,
-  score: PropTypes.number.isRequired
+  score: PropTypes.number
 }

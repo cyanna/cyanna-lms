@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -30,12 +32,7 @@ class StudentInteractionsReport
     end
 
     def student_row_number(student_name)
-      rows = ff('.report>tbody>tr')
-      rows.each do |row|
-        if ff('td')[0].text == student_name
-          return row
-        end
-      end
+      fj("tr:contains('#{student_name}')")
     end
   end
 end

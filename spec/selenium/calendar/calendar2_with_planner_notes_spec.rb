@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2014 - present Instructure, Inc.
 #
@@ -23,17 +25,18 @@ describe "calendar2" do
   include Calendar2Common
 
   before(:once) do
-    # or some stuff we need to click is "below the fold"
-    make_full_screen
-
-    Account.default.enable_feature!(:student_planner)
     course_with_teacher(active_all: true, new_user: true)
     @student1 = User.create!(name: 'Student 1')
     @course.enroll_student(@student1).accept!
+    @student1.update!(preferences: {:selected_calendar_contexts => ["user_#{@student1.id}", "course_#{@course.id}"]})
+    @teacher.update!(preferences: {:selected_calendar_contexts => ["user_#{@teacher.id}", "course_#{@course.id}"]})
   end
 
   context "as the student" do
     before :each do
+      # or some stuff we need to click is "below the fold"
+
+
       user_session(@student1)
     end
 
@@ -53,6 +56,7 @@ describe "calendar2" do
       get '/calendar2'
       wait_for_ajax_requests
       f('.fc-week td').click # click the first day of the month
+      wait_for_ajax_requests
       f('li[aria-controls="edit_planner_note_form_holder"]').click # the My To Do tab
       replace_content(f('#planner_note_date'), 0.days.from_now.to_date.iso8601)
       replace_content(f('#planner_note_title'), title)
@@ -152,6 +156,9 @@ describe "calendar2" do
 
   context "as the teacher" do
     before :each do
+      # or some stuff we need to click is "below the fold"
+
+
       user_session(@teacher)
     end
 
@@ -221,6 +228,8 @@ describe "calendar2" do
     end
 
     before :each do
+      # or some stuff we need to click is "below the fold"
+      @user.update!(preferences: {:selected_calendar_contexts => ["user_#{@user.id}", "course_#{@course1.id}", "course_#{@course2.id}"]})
       user_session(@user)
     end
 
@@ -240,6 +249,7 @@ describe "calendar2" do
       get '/calendar2'
       wait_for_ajax_requests
       f('.fc-week td').click # click the first day of the month
+      wait_for_ajax_requests
       f('li[aria-controls="edit_planner_note_form_holder"]').click # the My To Do tab
       context_codes = ff('#planner_note_context option').map { |el| el['value'] }
       expect(context_codes).to match_array([@user.asset_string, @course2.asset_string])

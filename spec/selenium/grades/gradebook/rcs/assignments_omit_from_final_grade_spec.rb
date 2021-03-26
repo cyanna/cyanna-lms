@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -17,8 +19,9 @@
 
 require_relative '../../../common'
 require_relative '../../../helpers/assignments_common'
+require_relative '../../pages/gradebook_page'
 
-describe 'omit from final grade assignments' do
+describe 'Gradebook omit from final grade assignments' do
   include_context "in-process server selenium tests"
   include AssignmentsCommon
 
@@ -57,7 +60,6 @@ describe 'omit from final grade assignments' do
   context 'assignment edit and show pages' do
     before(:each) do
       enroll_teacher_and_students
-      enable_all_rcs @course.account
       stub_rcs_config
       assignment_2
       user_session(teacher)

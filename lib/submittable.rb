@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2016 - present Instructure, Inc.
 #
@@ -55,7 +57,7 @@ module Submittable
       ids_visible_to_sections = if opts[:item_type] == :discussion
         user_sections = Enrollment.active.where(
           :course_id => opts[:course_id], :user_id => opts[:user_id]).pluck(:course_section_id)
-        DiscussionTopicSectionVisibility.where(:course_section_id => user_sections).pluck(:discussion_topic_id).uniq
+        DiscussionTopicSectionVisibility.active.where(:course_section_id => user_sections).pluck(:discussion_topic_id).uniq
       else
         []
       end

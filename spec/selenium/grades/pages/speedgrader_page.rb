@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2016 - present Instructure, Inc.
 #
@@ -15,9 +17,16 @@
 # You should have received a copy of the GNU Affero General Public License along
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 
+require_relative 'post_grades_tray_page'
+require_relative 'hide_grades_tray_page'
+
 class Speedgrader
   class << self
     include SeleniumDependencies
+
+    def tray
+      f('[role=dialog][aria-label="Hide grades tray"]')
+    end
 
     # components/elements
     def right_inner_panel
@@ -44,6 +53,14 @@ class Speedgrader
       f('#grading-box-extended')
     end
 
+    def hidden_pill
+      fxpath('//span[text() = "Hidden"]', hidden_pill_container)
+    end
+
+    def hidden_pill_container
+      f('#speed_grader_hidden_submission_pill_mount_point')
+    end
+
     def grading_enabled?
       grade_input.enabled?
     end
@@ -68,8 +85,32 @@ class Speedgrader
       fxpath('//ul[@role = "menu"]//span[text() = "Keyboard Shortcuts"]')
     end
 
-    def mute_button
-      f('button#mute_link')
+    def post_or_hide_grades_button
+      fj('button[title="Post or Hide Grades"]:visible')
+    end
+
+    def all_grades_hidden_link
+      fj('button:contains("All Grades Hidden"):visible')
+    end
+
+    def post_grades_link
+      fj("[role=menuitem]:contains('Post Grades'):visible")
+    end
+
+    def no_grades_to_post_button
+      fj("[role=menuitem]:contains('No Grades to Post'):visible")
+    end
+
+    def all_grades_posted_link
+      fj("[role=menuitem]:contains('All Grades Posted'):visible")
+    end
+
+    def hide_grades_link
+      fj("[role=menuitem]:contains('Hide Grades'):visible")
+    end
+
+    def grades_hidden_icon
+      f('svg[name=IconOff]', f('#speed_grader_post_grades_menu_mount_point'))
     end
 
     def hide_students_chkbox
@@ -281,11 +322,15 @@ class Speedgrader
       f("#assessment-audit-trail")
     end
 
+    def reassignment_btn
+      f("#reassign_assignment")
+    end
+
     # action
     def visit(course_id, assignment_id, timeout = 10)
       get "/courses/#{course_id}/gradebook/speed_grader?assignment_id=#{assignment_id}"
       visibility_check = grade_input
-      keep_trying_until(timeout) { visibility_check.displayed? }
+      wait_for(method: :visit, timeout: timeout) { visibility_check.displayed? }
     end
 
     def select_provisional_grade_by_label(label)
@@ -311,12 +356,28 @@ class Speedgrader
       students_dropdown_button.click
     end
 
+    def fetch_student_names
+      ff('li', student_dropdown_menu).map(&:text)
+    end
+
     def click_next_or_prev_student(direction_string)
       if direction_string.equal?(:next)
         next_student.click
       else
         previous_student.click
       end
+    end
+
+    def click_post_or_hide_grades_button
+      post_or_hide_grades_button.click
+    end
+
+    def click_post_link
+      post_grades_link.click
+    end
+
+    def click_hide_link
+      hide_grades_link.click
     end
 
     def click_settings_link
@@ -337,6 +398,10 @@ class Speedgrader
 
     def click_next_student_btn
       next_student_btn.click
+    end
+
+    def click_reassignment_btn
+      reassignment_btn.click
     end
 
     def add_comment_and_submit(comment)
@@ -366,7 +431,7 @@ class Speedgrader
     end
 
     def select_rubric_criterion(criterion)
-      fj("span:contains('#{criterion}'):visible").click
+      ff(".rating-description").select { |elt| elt.displayed? && elt.text == criterion }[0].click
     end
 
     def clear_new_comment
@@ -421,7 +486,7 @@ class Speedgrader
     end
 
     def expand_assessment_audit_user_events(user)
-      f("#user-event-group-#{user.id} button").click
+      f("#creator-event-group-user-#{user.id} button").click
       wait_for_animations
     end
 
@@ -430,6 +495,10 @@ class Speedgrader
       # was causing certain specs to flicker. this fixes that issue by
       # increasing the width of the right pane
       driver.execute_script("$('#right_side').width('900px')")
+    end
+
+    def right_pane
+      f('#right_side')
     end
 
     # quizzes
@@ -495,7 +564,7 @@ class Speedgrader
     end
 
     def rating_by_text(rating_text)
-      fj("span:contains(\"#{rating_text}\")")
+      ff(".rating-description").select { |elt| elt.displayed? && elt.text == rating_text }[0]
     end
 
     def saved_rubric_ratings
@@ -503,7 +572,7 @@ class Speedgrader
     end
 
     def learning_outcome_points
-      f('.criterion_points input')
+      f('td[data-testid="criterion-points"] input')
     end
 
     def enter_rubric_points(points)
@@ -511,11 +580,11 @@ class Speedgrader
     end
 
     def rubric_criterion_points(index = 0)
-      ff('.criterion_points')[index]
+      ff('td[data-testid="criterion-points"]')[index]
     end
 
     def rubric_grade_input(criteria_id)
-      f("#criterion_#{criteria_id} td.criterion_points input")
+      f('#criterion_#{criteria_id} td[data-testid="criterion-points"] input')
     end
 
     def rubric_graded_points(index = 0)
@@ -523,7 +592,7 @@ class Speedgrader
     end
 
     def comment_button_for_row(row_text)
-      row =fj("tr:contains('#{row_text}')")
+      row = fj("tr:contains('#{row_text}')")
       fj('button:contains("Additional Comments")', row)
     end
 
@@ -531,13 +600,24 @@ class Speedgrader
       f("textarea[data-selenium='criterion_comments_text']")
     end
 
-    def update_comment_button
-      fj("button:contains('Update Comment'):visible")
-    end
-
     def rubric_comment_for_row(row_text)
       row = fj("tr:contains('#{row_text}'):visible")
       f(".react-rubric-break-words", row)
+    end
+
+    def manually_post_grades(type:, sections: [])
+      click_post_or_hide_grades_button
+      click_post_link
+      PostGradesTray.post_type_radio_button(type).click
+      PostGradesTray.select_sections(sections: sections)
+      PostGradesTray.post_grades
+    end
+
+    def manually_hide_grades(sections: [])
+      click_post_or_hide_grades_button
+      click_hide_link
+      HideGradesTray.select_sections(sections: sections)
+      HideGradesTray.hide_grades
     end
   end
 end

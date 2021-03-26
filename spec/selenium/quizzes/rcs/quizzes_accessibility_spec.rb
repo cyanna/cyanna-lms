@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -24,7 +26,6 @@ describe 'quizzes accessibility' do
 
   before(:each) do
     course_with_teacher_logged_in
-    enable_all_rcs @course.account
     stub_rcs_config
     @last_quiz = start_quiz_question
   end

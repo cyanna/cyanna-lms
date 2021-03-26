@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Copyright (C) 2011 - present Instructure, Inc.
 #
 # This file is part of Canvas.
@@ -37,9 +39,10 @@ class DiscussionTopic < ActiveRecord::Base
   include LockedFor
 
   restrict_columns :content, [:title, :message]
-  restrict_columns :settings, [:delayed_post_at, :require_initial_post, :discussion_type,
-                               :lock_at, :pinned, :locked, :allow_rating, :only_graders_can_rate, :sort_by_rating]
+  restrict_columns :settings, [:require_initial_post, :discussion_type, :assignment_id,
+                               :pinned, :locked, :allow_rating, :only_graders_can_rate, :sort_by_rating, :group_category_id]
   restrict_columns :state, [:workflow_state]
+  restrict_columns :availability_dates, [:delayed_post_at, :lock_at]
   restrict_assignment_columns
 
   attr_accessor :user_has_posted, :saved_by, :total_root_discussion_entries
@@ -89,6 +92,7 @@ class DiscussionTopic < ActiveRecord::Base
   acts_as_list scope: { context: self, pinned: true }
 
   before_create :initialize_last_reply_at
+  before_create :set_root_account_id
   before_save :default_values
   before_save :set_schedule_delayed_transitions
   after_save :update_assignment
@@ -96,7 +100,12 @@ class DiscussionTopic < ActiveRecord::Base
   after_save :touch_context
   after_save :schedule_delayed_transitions
   after_save :update_materialized_view_if_changed
+  after_save :recalculate_progressions_if_sections_changed
+  after_save :sync_attachment_with_publish_state
   after_update :clear_streams_if_not_published
+  after_update :clear_non_applicable_stream_items_for_sections
+  after_update :clear_non_applicable_stream_items_for_delayed_posts
+  after_update :clear_non_applicable_stream_items_for_locked_modules
   after_create :create_participant
   after_create :create_materialized_view
 
@@ -156,10 +165,16 @@ class DiscussionTopic < ActiveRecord::Base
 
   def default_values
     self.context_code = "#{self.context_type.underscore}_#{self.context_id}"
-    self.title ||= t '#discussion_topic.default_title', "No Title"
+
+    if self.title.blank?
+      self.title = t('#discussion_topic.default_title', "No Title")
+    end
+
     self.discussion_type = DiscussionTypes::SIDE_COMMENT if !read_attribute(:discussion_type)
     @content_changed = self.message_changed? || self.title_changed?
+
     default_submission_values
+
     if self.has_group_category?
       self.subtopics_refreshed_at ||= Time.zone.parse("Jan 1 2000")
     end
@@ -178,7 +193,8 @@ class DiscussionTopic < ActiveRecord::Base
   end
 
   def set_schedule_delayed_transitions
-    if self.delayed_post_at? && self.delayed_post_at_changed?
+    @delayed_post_at_changed = self.delayed_post_at_changed?
+    if self.delayed_post_at? && @delayed_post_at_changed
       @should_schedule_delayed_post = true
       self.workflow_state = 'post_delayed' if [:migration, :after_migration].include?(self.saved_by) && self.delayed_post_at > Time.now
     end
@@ -196,11 +212,25 @@ class DiscussionTopic < ActiveRecord::Base
     end
   end
 
+  attr_writer :sections_changed
+  def recalculate_progressions_if_sections_changed
+    # either changed sections or undid section specificness
+    return unless self.is_section_specific? ? @sections_changed : self.is_section_specific_before_last_save
+    self.class.connection.after_transaction_commit do
+      if self.context_module_tags.preload(:context_module).exists?
+        self.context_module_tags.map(&:context_module).uniq.each do |cm|
+          cm.invalidate_progressions
+          cm.touch
+        end
+      end
+    end
+  end
+
   def schedule_delayed_transitions
     return if self.saved_by == :migration
-
-    self.send_at(self.delayed_post_at, :update_based_on_date) if @should_schedule_delayed_post
-    self.send_at(self.lock_at, :update_based_on_date) if @should_schedule_lock_at
+    bp = true if @importing_migration&.migration_type == 'master_course_import'
+    delay(run_at: delayed_post_at).update_based_on_date(for_blueprint: bp) if @should_schedule_delayed_post
+    delay(run_at: lock_at).update_based_on_date(for_blueprint: bp) if @should_schedule_lock_at
     # need to clear these in case we do a save whilst saving (e.g.
     # Announcement#respect_context_lock_rules), so as to avoid the dreaded
     # double delayed job ಠ_ಠ
@@ -208,9 +238,18 @@ class DiscussionTopic < ActiveRecord::Base
     @should_schedule_lock_at = nil
   end
 
+  def sync_attachment_with_publish_state
+    if (self.saved_change_to_workflow_state? || self.saved_change_to_locked? || self.saved_change_to_attachment_id?) && self.attachment
+      unless self.attachment.hidden? # if it's already hidden leave alone
+        locked = !!(unpublished? || not_available_yet? || not_available_anymore?)
+        self.attachment.update_attribute(:locked, locked)
+      end
+    end
+  end
+
   def update_subtopics
     if !self.deleted? && (self.has_group_category? || !!self.group_category_id_before_last_save)
-      send_later_if_production :refresh_subtopics
+      delay_if_production(singleton: "refresh_subtopics_#{self.global_id}").refresh_subtopics
     end
   end
 
@@ -219,7 +258,7 @@ class DiscussionTopic < ActiveRecord::Base
     category = self.group_category
 
     if category && self.root_topic_id.blank? && !self.deleted?
-      category.groups.active.each do |group|
+      category.groups.active.order(:id).each do |group|
         sub_topics << ensure_child_topic_for(group)
       end
     end
@@ -260,7 +299,14 @@ class DiscussionTopic < ActiveRecord::Base
     end
     if @old_assignment_id
       Assignment.where(:id => @old_assignment_id, :context_id => self.context_id, :context_type => self.context_type, :submission_types => 'discussion_topic').update_all(:workflow_state => 'deleted', :updated_at => Time.now.utc)
-      ContentTag.delete_for(Assignment.find(@old_assignment_id)) if @old_assignment_id
+      old_assignment = Assignment.find(@old_assignment_id)
+      ContentTag.delete_for(old_assignment)
+      # prevent future syncs from recreating the deleted assignment
+      if is_child_content?
+        old_assignment.submission_types = 'none'
+        own_tag = MasterCourses::ChildContentTag.all.polymorphic_where(:content => self).take
+        own_tag.child_subscription.create_content_tag_for!(old_assignment, :downstream_changes => ['workflow_state']) if own_tag
+      end
     elsif self.assignment && @saved_by != :assignment && !self.root_topic_id
       deleted_assignment = self.assignment.deleted?
       self.sync_assignment
@@ -287,6 +333,10 @@ class DiscussionTopic < ActiveRecord::Base
   end
 
   def is_announcement; false end
+
+  def homeroom_announcement?(_context)
+    false
+  end
 
   def root_topic?
     !self.root_topic_id && self.has_group_category?
@@ -488,7 +538,7 @@ class DiscussionTopic < ActiveRecord::Base
 
   def bulk_insert_new_participants(new_entry_ids, current_user, update_fields)
     records = new_entry_ids.map do |entry_id|
-      { discussion_entry_id: entry_id, user_id: current_user.id }.merge(update_fields)
+      { discussion_entry_id: entry_id, user_id: current_user.id, root_account_id: self.root_account_id}.merge(update_fields)
     end
     DiscussionEntryParticipant.bulk_insert(records)
   end
@@ -505,8 +555,8 @@ class DiscussionTopic < ActiveRecord::Base
     current_user ||= self.current_user
     return 0 unless current_user # default for logged out users
 
-    environment = lock ? :master : :slave
-    Shackles.activate(environment) do
+    environment = lock ? :primary : :secondary
+    GuardRail.activate(environment) do
       topic_participant = if opts[:use_preload] && self.association(:discussion_topic_participants).loaded?
         self.discussion_topic_participants.find{|dtp| dtp.user_id == current_user.id}
       else
@@ -596,7 +646,7 @@ class DiscussionTopic < ActiveRecord::Base
     return nil unless current_user
 
     topic_participant = nil
-    Shackles.activate(:master) do
+    GuardRail.activate(:primary) do
       DiscussionTopic.uncached do
         DiscussionTopic.unique_constraint_retry do
           topic_participant = self.discussion_topic_participants.where(:user_id => current_user).lock.first
@@ -667,7 +717,7 @@ class DiscussionTopic < ActiveRecord::Base
   end
 
   scope :visible_to_student_sections, -> (student) {
-    visibility_scope = DiscussionTopicSectionVisibility.
+    visibility_scope = DiscussionTopicSectionVisibility.active.
       where("discussion_topic_section_visibilities.discussion_topic_id = discussion_topics.id").
       where("EXISTS (?)", Enrollment.active_or_pending.where(:user_id => student).
         where("enrollments.course_section_id = discussion_topic_section_visibilities.course_section_id")
@@ -687,10 +737,10 @@ class DiscussionTopic < ActiveRecord::Base
   scope :by_position_legacy, -> { order("discussion_topics.position DESC, discussion_topics.created_at DESC, discussion_topics.id DESC") }
   scope :by_last_reply_at, -> { order("discussion_topics.last_reply_at DESC, discussion_topics.created_at DESC, discussion_topics.id DESC") }
 
-  scope :by_posted_at, -> { order(Arel.sql(<<-SQL))
-      COALESCE(discussion_topics.delayed_post_at, discussion_topics.posted_at, discussion_topics.created_at) DESC,
-      discussion_topics.created_at DESC,
-      discussion_topics.id DESC
+  scope :by_posted_at, -> { order(Arel.sql(<<~SQL))
+    COALESCE(discussion_topics.delayed_post_at, discussion_topics.posted_at, discussion_topics.created_at) DESC,
+    discussion_topics.created_at DESC,
+    discussion_topics.id DESC
     SQL
   }
 
@@ -737,7 +787,9 @@ class DiscussionTopic < ActiveRecord::Base
 
   # There may be delayed jobs that expect to call this to update the topic, so be sure to alias
   # the old method name if you change it
-  def update_based_on_date
+  # Also: if this method is scheduled by a blueprint sync, ensure it isn't counted as a manual downstream change
+  def update_based_on_date(for_blueprint: false)
+    skip_downstream_changes! if for_blueprint
     transaction do
       reload lock: true # would call lock!, except, oops, workflow overwrote it :P
       lock if should_lock_yet
@@ -865,6 +917,10 @@ class DiscussionTopic < ActiveRecord::Base
       false
     elsif self.root_topic_id && self.has_group_category?
       false
+    elsif self.in_unpublished_module?
+      false
+    elsif self.locked_by_module?
+      false
     else
       true
     end
@@ -884,9 +940,87 @@ class DiscussionTopic < ActiveRecord::Base
     end
   end
 
+  # This is manually called for module publishing
+  def send_items_to_stream
+    if should_send_to_stream
+      queue_create_stream_items
+    end
+  end
+
   def clear_streams_if_not_published
-    if !self.published?
+    unless self.published?
       self.clear_stream_items
+    end
+  end
+
+  def in_unpublished_module?
+    return true if ContentTag.where(content_type: "DiscussionTopic", content_id: self, workflow_state: "unpublished").exists?
+    ContextModule.joins(:content_tags).where(content_tags: { content_type: "DiscussionTopic", content_id: self }, workflow_state: 'unpublished').exists?
+  end
+
+  def locked_by_module?
+    return false unless self.context_module_tags.any?
+    ContentTag.where(content_type: "DiscussionTopic", content_id: self, workflow_state: "active").all? { |tag| tag.context_module.unlock_at&.future? }
+  end
+
+  def clear_non_applicable_stream_items_for_sections
+    # either changed sections or made section specificness
+    return unless self.is_section_specific? ? @sections_changed : self.is_section_specific_before_last_save
+
+    delay_if_production.clear_stream_items_for_sections
+  end
+
+  def clear_stream_items_for_sections
+    remaining_participants = participants
+    user_ids = []
+    stream_item&.stream_item_instances&.find_each do |item|
+      applicable = remaining_participants.any? { |p| p.id == item.user_id }
+      unless applicable
+        user_ids.push(item.user_id)
+        item.destroy
+      end
+    end
+    self.clear_stream_item_cache_for(user_ids)
+  end
+
+  def clear_non_applicable_stream_items_for_delayed_posts
+    if self.is_announcement && self.delayed_post_at? && @delayed_post_at_changed && self.delayed_post_at > Time.now
+      delay_if_production.clear_stream_items_for_delayed_posts
+    end
+  end
+
+  def clear_stream_items_for_delayed_posts
+    user_ids = []
+    stream_item&.stream_item_instances&.find_each do |item|
+      user_ids.push(item.user_id)
+      item.destroy
+    end
+    self.clear_stream_item_cache_for(user_ids)
+  end
+
+  def clear_non_applicable_stream_items_for_locked_modules
+    return unless self.locked_by_module?
+    delay_if_production.clear_stream_items_for_locked_modules
+  end
+
+  def clear_stream_items_for_locked_modules
+    user_ids = []
+    stream_item&.stream_item_instances&.find_each do |item|
+      if self.locked_by_module_item?(item.user)
+        user_ids.push(item.user_id)
+        item.destroy
+      end
+    end
+    self.clear_stream_item_cache_for(user_ids)
+  end
+
+  def clear_stream_item_cache_for(user_ids)
+    if stream_item && user_ids.any?
+      StreamItemCache.delay_if_production(priority: Delayed::LOW_PRIORITY).
+        invalidate_all_recent_stream_items(
+          user_ids,
+          stream_item.context_type,
+          stream_item.context_id)
     end
   end
 
@@ -1042,7 +1176,7 @@ class DiscussionTopic < ActiveRecord::Base
 
     given do |user, session|
       self.allow_rating && (!self.only_graders_can_rate ||
-                            self.context.grants_right?(user, session, :manage_grades))
+                            self.course.grants_right?(user, session, :manage_grades))
     end
     can :rate
   end
@@ -1053,7 +1187,7 @@ class DiscussionTopic < ActiveRecord::Base
 
   def context_allows_user_to_create?(user)
     return true unless context.respond_to?(:allow_student_discussion_topics)
-    return true if context.user_is_admin?(user)
+    return true if context.grants_right?(user, :read_as_admin)
     context.allow_student_discussion_topics
   end
 
@@ -1090,17 +1224,25 @@ class DiscussionTopic < ActiveRecord::Base
     tags_to_update = self.context_module_tags.to_a
     if self.for_assignment?
       tags_to_update += self.assignment.context_module_tags
-      self.ensure_submission(user) if context.grants_right?(user, :participate_as_student) && assignment.visible_to_user?(user) && action == :contributed
+      if context.grants_right?(user, :participate_as_student) && assignment.visible_to_user?(user) && [:contributed, :deleted].include?(action)
+        only_update = (action == :deleted) # if we're deleting an entry, don't make a submission if it wasn't there already
+        self.ensure_submission(user, only_update)
+      end
     end
-    tags_to_update.each { |tag| tag.context_module_action(user, action, points) }
+    unless action == :deleted
+      tags_to_update.each { |tag| tag.context_module_action(user, action, points) }
+    end
   end
 
-  def ensure_submission(user)
+  def ensure_submission(user, only_update=false)
+    topic = (self.root_topic? && self.child_topic_for(user)) || self
+
     submission = Submission.active.where(assignment_id: self.assignment_id, user_id: user).first
-    unless submission && submission.submission_type == 'discussion_topic' && submission.workflow_state != 'unsubmitted'
-      submission = self.assignment.submit_homework(user, :submission_type => 'discussion_topic')
+    unless only_update || (submission && submission.submission_type == 'discussion_topic' && submission.workflow_state != 'unsubmitted')
+      submission = self.assignment.submit_homework(user, :submission_type => 'discussion_topic',
+        :submitted_at => topic && topic.discussion_entries.active.where(:user_id => user).minimum(:created_at))
     end
-    topic = self.root_topic? ? self.child_topic_for(user) : self
+    return unless submission
     if topic
       attachment_ids = topic.discussion_entries.active.where(:user_id => user).where.not(:attachment_id => nil).pluck(:attachment_id)
       submission.attachment_ids = attachment_ids.sort.map(&:to_s).join(",")
@@ -1118,6 +1260,10 @@ class DiscussionTopic < ActiveRecord::Base
     notification_context.available?
   end
 
+  def course_broadcast_data
+    context&.broadcast_data
+  end
+
   has_a_broadcast_policy
 
   set_broadcast_policy do |p|
@@ -1127,6 +1273,7 @@ class DiscussionTopic < ActiveRecord::Base
       record.send_notification_for_context? and
       ((record.just_created && record.active?) || record.changed_state(:active, !record.is_announcement ? :unpublished : :post_delayed))
     }
+    p.data { course_broadcast_data }
   end
 
   def delay_posting=(val); end
@@ -1331,7 +1478,7 @@ class DiscussionTopic < ActiveRecord::Base
   def low_level_locked_for?(user, opts={})
     return false if opts[:check_policies] && self.grants_right?(user, :read_as_admin)
 
-    Rails.cache.fetch(locked_cache_key(user), :expires_in => 1.minute) do
+    RequestCache.cache(locked_request_cache_key(user)) do
       locked = false
       if (self.delayed_post_at && self.delayed_post_at > Time.now)
         locked = {object: self, unlock_at: delayed_post_at}
@@ -1371,12 +1518,6 @@ class DiscussionTopic < ActiveRecord::Base
     end
   end
 
-  def clear_locked_cache(user)
-    super
-    Rails.cache.delete(assignment.locked_cache_key(user)) if assignment
-    Rails.cache.delete(root_topic.locked_cache_key(user)) if root_topic
-  end
-
   def entries_for_feed(user, podcast_feed=false)
     return [] if !user_can_see_posts?(user)
     return [] if locked_for?(user, check_policies: true)
@@ -1396,8 +1537,8 @@ class DiscussionTopic < ActiveRecord::Base
       txt = (message.message || "")
       attachment_matches = txt.scan(/\/#{context.class.to_s.pluralize.underscore}\/#{context.id}\/files\/(\d+)\/download/)
       attachment_ids += (attachment_matches || []).map{|m| m[0] }
-      media_object_matches = txt.scan(/media_comment_([\w\-]+)/)
-      media_object_ids += (media_object_matches || []).map{|m| m[0] }
+      media_object_matches = txt.scan(/media_comment_([\w\-]+)/) + txt.scan(/data-media-id=\"([\w\-]+)\"/)
+      media_object_ids += (media_object_matches || []).map{|m| m[0] }.uniq
       (attachment_ids + media_object_ids).each do |id|
         messages_hash[id] ||= message
       end
@@ -1415,7 +1556,7 @@ class DiscussionTopic < ActiveRecord::Base
     media_objects = media_object_ids.empty? ? [] : MediaObject.where(media_id: media_object_ids).to_a
     media_objects = media_objects.uniq(&:media_id)
     media_objects = media_objects.map do |media_object|
-      if media_object.media_id == "maybe" || media_object.deleted? || media_object.context != context
+      if media_object.media_id == "maybe" || media_object.deleted? || (media_object.context_type != "User" && media_object.context != context)
         media_object = nil
       end
       if media_object && media_object.podcast_format_details
@@ -1497,7 +1638,7 @@ class DiscussionTopic < ActiveRecord::Base
 
   # synchronously create/update the materialized view
   def create_materialized_view
-    DiscussionTopic::MaterializedView.for(self).update_materialized_view_without_send_later(use_master: true)
+    DiscussionTopic::MaterializedView.for(self).update_materialized_view(synchronous: true, use_master: true)
   end
 
   def grading_standard_or_default
@@ -1508,5 +1649,9 @@ class DiscussionTopic < ActiveRecord::Base
     else
       GradingStandard.default_instance
     end
+  end
+
+  def set_root_account_id
+    self.root_account_id ||= self.context&.root_account_id
   end
 end

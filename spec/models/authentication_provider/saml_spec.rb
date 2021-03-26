@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -25,68 +27,6 @@ describe AuthenticationProvider::SAML do
     @file_that_exists = File.expand_path(__FILE__)
   end
 
-  it "should load encryption settings" do
-    ConfigFile.stub('saml', {
-                              :entity_id => 'http://www.example.com/saml2',
-                              :encryption => {
-                                  :private_key => @file_that_exists,
-                                  :certificate => @file_that_exists
-                              }
-                          })
-
-    s = @account.authentication_providers.build(:auth_type => 'saml').saml_settings
-
-    expect(s).to be_encryption_configured
-  end
-
-  it "should load the tech contact settings" do
-    ConfigFile.stub('saml', {
-                              :tech_contact_name => 'Admin Dude',
-                              :tech_contact_email => 'admindude@example.com',
-                          })
-
-    s = @account.authentication_providers.build(:auth_type => 'saml').saml_settings
-
-    expect(s.tech_contact_name).to eq 'Admin Dude'
-    expect(s.tech_contact_email).to eq 'admindude@example.com'
-  end
-
-  it "should allow additional private keys to be set" do
-    ConfigFile.stub('saml', {
-                              :entity_id => 'http://www.example.com/saml2',
-                              :encryption => {
-                                :private_key => @file_that_exists,
-                                :certificate => @file_that_exists,
-                                :additional_private_keys => [
-                                  @file_that_exists
-                                ]
-                              }
-                          })
-
-    s = @account.authentication_providers.build(:auth_type => 'saml').saml_settings
-
-    expect(s.xmlsec_additional_privatekeys).to eq [@file_that_exists]
-  end
-
-  it "should allow some additional private keys to be set when not all exist" do
-    file_that_does_not_exist = '/tmp/i_am_not_a_private_key'
-    ConfigFile.stub('saml', {
-                              :entity_id => 'http://www.example.com/saml2',
-                              :encryption => {
-                                :private_key => @file_that_exists,
-                                :certificate => @file_that_exists,
-                                :additional_private_keys => [
-                                  @file_that_exists,
-                                  file_that_does_not_exist
-                                ]
-                              }
-                          })
-
-    s = @account.authentication_providers.build(:auth_type => 'saml').saml_settings
-
-    expect(s.xmlsec_additional_privatekeys).to eq [@file_that_exists]
-  end
-
   it "should set the entity_id with the current domain" do
     allow(HostUrl).to receive(:default_host).and_return('bob.cody.instructure.com')
     @aac = @account.authentication_providers.create!(:auth_type => "saml")
@@ -100,6 +40,23 @@ describe AuthenticationProvider::SAML do
     @account.save!
     @aac = @account.authentication_providers.create!(:auth_type => "saml")
     expect(@aac.entity_id).to eq "my_entity"
+  end
+
+  it "unsets the entity id when it gets deleted" do
+    @account.settings[:saml_entity_id] = 'my_entity'
+    @account.save!
+    @aac = @account.authentication_providers.create!(:auth_type => "saml")
+    @aac.destroy
+    expect(@account.settings).not_to have_key(:saml_entity_id)
+  end
+
+  it "does not unset the entity id when it gets deleted if another config exists" do
+    @account.settings[:saml_entity_id] = 'my_entity'
+    @account.save!
+    @aac = @account.authentication_providers.create!(:auth_type => "saml")
+    @aac2 = @account.authentication_providers.create!(:auth_type => "saml")
+    @aac.destroy
+    expect(@account.settings[:saml_entity_id]).to eq 'my_entity'
   end
 
   it "should set requested_authn_context to nil if empty string" do
@@ -154,6 +111,45 @@ describe AuthenticationProvider::SAML do
       idp.want_authn_requests_signed = true
       saml.populate_from_metadata(entity)
       expect(saml.sig_alg).to eq SAML2::Bindings::HTTPRedirect::SigAlgs::RSA_SHA1
+    end
+
+    context "identifier format" do
+      let(:saml) { AuthenticationProvider::SAML.new }
+      let(:entity) { SAML2::Entity.new }
+      let(:idp) { SAML2::IdentityProvider.new }
+
+      before { entity.roles << idp }
+
+      it "overwrites if metadata only has one" do
+        idp.name_id_formats << SAML2::NameID::Format::EMAIL_ADDRESS
+        expect(saml.identifier_format).to eq(SAML2::NameID::Format::UNSPECIFIED)
+        saml.populate_from_metadata(entity)
+        expect(saml.identifier_format).to eq(SAML2::NameID::Format::EMAIL_ADDRESS)
+      end
+
+      it "does not overwrite if there are multiple and we're set to unspecified" do
+        idp.name_id_formats << SAML2::NameID::Format::EMAIL_ADDRESS
+        idp.name_id_formats << SAML2::NameID::Format::TRANSIENT
+        saml.identifier_format = SAML2::NameID::Format::UNSPECIFIED
+        saml.populate_from_metadata(entity)
+        expect(saml.identifier_format).to eq(SAML2::NameID::Format::UNSPECIFIED)
+      end
+
+      it "sets to unspecified if there are multiple and we're set to something else" do
+        idp.name_id_formats << SAML2::NameID::Format::EMAIL_ADDRESS
+        idp.name_id_formats << SAML2::NameID::Format::TRANSIENT
+        saml.identifier_format = SAML2::NameID::Format::PERSISTENT
+        saml.populate_from_metadata(entity)
+        expect(saml.identifier_format).to eq(SAML2::NameID::Format::UNSPECIFIED)
+      end
+
+      it "does not overwrite if there are multiple and we're set to one of the valid ones" do
+        idp.name_id_formats << SAML2::NameID::Format::EMAIL_ADDRESS
+        idp.name_id_formats << SAML2::NameID::Format::TRANSIENT
+        saml.identifier_format = SAML2::NameID::Format::TRANSIENT
+        saml.populate_from_metadata(entity)
+        expect(saml.identifier_format).to eq(SAML2::NameID::Format::TRANSIENT)
+      end
     end
   end
 

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -20,6 +22,7 @@ require "nokogiri"
 require "selenium-webdriver"
 require "socket"
 require "timeout"
+require "sauce_whisk"
 require_relative 'test_setup/custom_selenium_rspec_matchers'
 require_relative 'test_setup/selenium_driver_setup'
 require_relative 'test_setup/selenium_extensions'
@@ -65,11 +68,11 @@ module SeleniumErrorRecovery
       # no sense trying anymore, give up and hope that other nodes pick up the slack
       puts "Error: got `#{exception}`, aborting"
       RSpec.world.wants_to_quit = true
-    when EOFError, Errno::ECONNREFUSED, Net::ReadTimeout
+    when EOFError, Errno::ECONNREFUSED, Net::ReadTimeout, Selenium::WebDriver::Error::UnknownError
+      return false if SeleniumDriverSetup.saucelabs_test_run?
       return false if RSpec.world.wants_to_quit
-      return false unless exception.backtrace.grep(/selenium-webdriver/).present?
+      return false if exception.backtrace.grep(/selenium-webdriver/).blank?
 
-      puts "SELENIUM: webdriver is misbehaving.  Will try to re-initialize."
       SeleniumDriverSetup.reset!
       return true
     end
@@ -87,7 +90,8 @@ if defined?(TestQueue::Runner::RSpec::LazyGroups)
 else
   RSpec.configure do |config|
     config.before :suite do
-      SeleniumDriverSetup.run
+      # For flakey spec catcher: if server and driver are already initialized, reuse instead of starting another instance
+      SeleniumDriverSetup.run unless SeleniumDriverSetup.server.present? && SeleniumDriverSetup.driver.present?
     end
   end
 end
@@ -112,7 +116,14 @@ shared_context "in-process server selenium tests" do
   # set up so you can use rails urls helpers in your selenium tests
   include Rails.application.routes.url_helpers
 
+  prepend_before :all do
+    # building the schema is currently very slow.
+    # this ensures the schema is built before specs are run to avoid timeouts
+    CanvasSchema.graphql_definition
+  end
+
   prepend_before :each do
+    resize_screen_to_standard
     SeleniumDriverSetup.allow_requests!
     driver.ready_for_interaction = false # need to `get` before we do anything selenium-y in a spec
   end
@@ -127,7 +138,7 @@ shared_context "in-process server selenium tests" do
     retry_count = 0
     begin
       default_url_options[:host] = app_host_and_port
-      close_modal_if_present { resize_screen_to_normal }
+      close_modal_if_present { resize_screen_to_standard } unless @driver.nil?
     rescue
       if maybe_recover_from_exception($ERROR_INFO) && (retry_count += 1) < 3
         retry
@@ -151,7 +162,7 @@ shared_context "in-process server selenium tests" do
 
   # synchronize db connection methods for a modicum of thread safety
   module SynchronizeConnection
-    %w{execute exec_cache exec_no_cache query transaction}.each do |method|
+    %w{cache_sql execute exec_cache exec_no_cache query transaction}.each do |method|
       class_eval <<-RUBY, __FILE__, __LINE__ + 1
         def #{method}(*)
           SeleniumDriverSetup.request_mutex.synchronize { super }
@@ -190,7 +201,30 @@ shared_context "in-process server selenium tests" do
       SeleniumDriverSetup.disallow_requests!
     end
 
+    # we don't want to combine this into the above block to avoid x-test pollution
+    # if a previous step fails
+    begin
+      clear_local_storage
+    rescue Selenium::WebDriver::Error::WebDriverError
+      # we want to ignore selenium errors when attempting to wait here
+    end
+
+    # we don't want to combine this into the above block to avoid x-test pollution
+    # if a previous step fails
+    begin
+      driver.session_storage.clear
+    rescue Selenium::WebDriver::Error::WebDriverError
+      # we want to ignore selenium errors when attempting to wait here
+    end
+
     if SeleniumDriverSetup.saucelabs_test_run?
+      job_id = driver.session_id
+      job = SauceWhisk::Jobs.fetch job_id
+      old_name = job.name
+      job.name = old_name.prepend(example.metadata[:full_description].to_s + " - ")
+      job.passed = example.exception.nil?
+      job.save
+
       driver.quit
       SeleniumDriverSetup.reset!
     end
@@ -198,21 +232,35 @@ shared_context "in-process server selenium tests" do
 
   # logs everything that showed up in the browser console during selenium tests
   after(:each) do |example|
+    # safari driver and edge driver do not support driver.manage.logs
+    # don't run for sauce labs smoke tests
+    next if SeleniumDriverSetup.saucelabs_test_run?
+
     if example.exception
       html = f('body').attribute('outerHTML')
-      document = Nokogiri::HTML(html)
+      document = Nokogiri::HTML5(html)
       example.metadata[:page_html] = document.to_html
     end
 
-    browser_logs = driver.manage.logs.get(:browser)
+    browser_logs = driver.manage.logs.get(:browser) rescue nil
 
+    # log INSTUI deprecation warnings
     if browser_logs.present?
+      spec_file = example.file_path.sub(/.*spec\/selenium\//, '')
+      deprecations =  browser_logs.select {|l| l.message =~ /\[.*deprecated./}.map do |l|
+        ">>> #{spec_file}: \"#{example.description}\": #{driver.current_url}: #{l.message.gsub(/.*Warning/, 'Warning') }"
+      end
+      puts "\n", deprecations.uniq
+    end
+
+    if !example.metadata[:ignore_js_errors] && browser_logs.present?
       msg = "browser console logs for \"#{example.description}\":\n" + browser_logs.map(&:message).join("\n\n")
       Rails.logger.info(msg)
       # puts msg
 
       # if you run into something that doesn't make sense t
       browser_errors_we_dont_care_about = [
+        "A theme registry has already been initialized.",
         "Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture since its load",
         "Error: <path> attribute d: Expected number",
         "elements with non-unique id #",
@@ -223,17 +271,35 @@ shared_context "in-process server selenium tests" do
         "Deprecated use of magic jQueryUI widget markup detected",
         "Uncaught SG: Did not receive drive#about kind when fetching import",
         "Failed prop type",
+        "Please either add a 'report-uri' directive, or deliver the policy via the 'Content-Security-Policy' header.",
         "isMounted is deprecated. Instead, make sure to clean up subscriptions and pending requests in componentWillUnmount to prevent memory leaks",
         "https://www.gstatic.com/_/apps-viewer/_/js/k=apps-viewer.standalone.en_US",
         "In webpack, loading timezones on-demand is not",
         "Uncaught RangeError: Maximum call stack size exceeded",
-        "Warning: React does not recognize the `%s` prop on a DOM element."
+        "Warning: React does not recognize the `%s` prop on a DOM element.",
+        # For InstUI upgrade to 5.36. These should probably be fixed eventually.
+        "Warning: [Focusable] Exactly one focusable child is required (0 found).",
+        # COMMS-1815: Meeseeks should fix this one on the permissions page
+        "Warning: [Select] The option 'All Roles' doesn't correspond to an option.",
+        "Warning: [Focusable] Exactly one tabbable child is required (0 found).",
+        "Warning: [Alert] live region must have role='alert' set on page load in order to announce content",
+        "[View] display style is set to 'inline'",
+        "Uncaught TypeError: Failed to fetch",
+        "Unexpected end of JSON input",
+        "The google.com/jsapi JavaScript loader is deprecat",
+        "Uncaught Error: Not Found", # for canvas-rce when no backend is set up
+        "Uncaught Error: Minified React error #188",
+        "Uncaught Error: Minified React error #200", # this is coming from canvas-rce, but we should fix it
+        "Uncaught Error: Loading chunk", # probably happens when the test ends when the browser is still loading some JS
+        "Access to Font at 'http://cdnjs.cloudflare.com/ajax/libs/mathjax/",
+        "Access to XMLHttpRequest at 'http://www.example.com/' from origin",
+        "The user aborted a request" # The server doesn't respond fast enough sometimes and requests can be aborted. For example: when a closing a dialog.
       ].freeze
 
       javascript_errors = browser_logs.select do |e|
         e.level == "SEVERE" &&
-        e.message.present? &&
-        browser_errors_we_dont_care_about.none? {|s| e.message.include?(s)}
+          e.message.present? &&
+          browser_errors_we_dont_care_about.none? {|s| e.message.include?(s)}
       end
 
       if javascript_errors.present?

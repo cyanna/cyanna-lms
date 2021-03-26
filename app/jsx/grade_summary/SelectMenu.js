@@ -16,34 +16,34 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-import PropTypes from 'prop-types';
-import React from 'react';
-import Select from '@instructure/ui-core/lib/components/Select';
+import PropTypes from 'prop-types'
+import React from 'react'
+import {SimpleSelect} from '@instructure/ui-simple-select'
 
-export default function SelectMenu (props) {
-  const options = props.options.map((option) => {
-    const text = option[props.textAttribute];
-    const value = option[props.valueAttribute];
-    return(
-      <option key={value} value={value}>
+export default function SelectMenu(props) {
+  const options = props.options.map(option => {
+    const text = option[props.textAttribute]
+    const value = option[props.valueAttribute]
+    return (
+      <SimpleSelect.Option key={value} id={value} value={value}>
         {text}
-      </option>
-    );
-  });
+      </SimpleSelect.Option>
+    )
+  })
 
   return (
-    <Select
+    <SimpleSelect
       defaultValue={props.defaultValue}
-      disabled={props.disabled}
+      interaction={props.disabled ? 'disabled' : 'enabled'}
       id={props.id}
-      inline
-      label={props.label}
+      isInline
+      renderLabel={props.label}
       onChange={props.onChange}
       width="15rem"
     >
       {options}
-    </Select>
-  );
+    </SimpleSelect>
+  )
 }
 
 SelectMenu.propTypes = {
@@ -55,4 +55,4 @@ SelectMenu.propTypes = {
   options: PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.array, PropTypes.object])).isRequired,
   textAttribute: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
   valueAttribute: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired
-};
+}

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -16,20 +18,34 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-Types::LegacyNodeType = GraphQL::EnumType.define do
-  name "NodeType"
+class Types::LegacyNodeType < Types::BaseEnum
+  graphql_name "NodeType"
 
+  value "Account"
   value "Assignment"
   value "AssignmentGroup"
+  value "Conversation"
   value "Course"
-  value "Section"
-  value "User"
+  value "Discussion"
   value "Enrollment"
+  value "File"
   value "GradingPeriod"
-  value "Module"
-  value "Page"
   value "Group"
   value "GroupSet"
+  value "LearningOutcomeGroup"
+  value "MediaObject"
+  value "Module"
+  value "ModuleItem"
+  value "OutcomeCalculationMethod"
+  value "OutcomeProficiency"
+  value "Page"
+  value "PostPolicy"
+  value "Progress"
+  value "Rubric"
+  value "Section"
+  value "Submission"
+  value "Term"
+  value "User"
 
 =begin
   # TODO: seems like we should be able to dynamically generate the types that

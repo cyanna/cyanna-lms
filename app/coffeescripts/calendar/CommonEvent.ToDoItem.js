@@ -18,7 +18,7 @@
 
 import I18n from 'i18n!calendar'
 import fcUtil from '../util/fcUtil'
-import CommonEvent from '../calendar/CommonEvent'
+import CommonEvent from './CommonEvent'
 import {extend} from '../legacyCoffeesScriptHelpers'
 import 'jquery.instructure_date_and_time'
 import 'jquery.instructure_misc_helpers'
@@ -28,21 +28,19 @@ extend(ToDoItem, CommonEvent)
 export default function ToDoItem(data, contextInfo, actualContextInfo) {
   ToDoItem.__super__.constructor.call(this, data, contextInfo, actualContextInfo)
   this.eventType = 'todo_item'
-  switch(this.object.plannable_type)
-  {
-  case 'wiki_page':
-    this.deleteConfirmation = I18n.t('Are you sure you want to delete this page?')
-    break;
-  case 'discussion_topic':
-    this.deleteConfirmation = I18n.t('Are you sure you want to delete this discussion?')
-    break;
-  default:
-    this.deleteConfirmation = I18n.t('Are you sure you want to delete this To Do item?')
+  switch (this.object.plannable_type) {
+    case 'wiki_page':
+      this.deleteConfirmation = I18n.t('Are you sure you want to delete this page?')
+      break
+    case 'discussion_topic':
+      this.deleteConfirmation = I18n.t('Are you sure you want to delete this discussion?')
+      break
+    default:
+      this.deleteConfirmation = I18n.t('Are you sure you want to delete this To Do item?')
   }
 }
 
 Object.assign(ToDoItem.prototype, {
-  /* eslint-disable no-param-reassign */
   copyDataFromObject(data) {
     // on original load, data comes from the planner items API
     // but after editing an item, we get the wiki pages / discussion topics API update result
@@ -56,8 +54,8 @@ Object.assign(ToDoItem.prototype, {
     data.title = data.plannable.title
     data.url = data.html_url
 
-    this.object = this.calendarEvent = data // eslint-disable-line no-multi-assign
-    this.object.id = this.id = `${data.plannable_type}_${data.plannable_id}` // eslint-disable-line no-multi-assign
+    this.object = this.calendarEvent = data
+    this.object.id = this.id = `${data.plannable_type}_${data.plannable_id}`
     this.title = data.title || 'Untitled'
     this.start = this.parseStartDate()
     this.end = undefined
@@ -100,10 +98,10 @@ Object.assign(ToDoItem.prototype, {
     const date_param = fcUtil.unwrap(todo_date).toISOString()
     const params = {}
     if (this.object.plannable_type === 'wiki_page') {
-      params["wiki_page[student_planner_checkbox]"] = true
-      params["wiki_page[student_todo_at]"] = date_param
+      params['wiki_page[student_planner_checkbox]'] = true
+      params['wiki_page[student_todo_at]'] = date_param
       if (title) {
-        params["wiki_page[title]"] = title
+        params['wiki_page[title]'] = title
       }
     } else {
       params.todo_date = date_param
@@ -116,11 +114,7 @@ Object.assign(ToDoItem.prototype, {
 
   // called at the end of a drag and drop operation
   saveDates(success, error) {
-    return this.save(
-      this.saveParams(this.start),
-      success,
-      error
-    )
+    return this.save(this.saveParams(this.start), success, error)
   },
 
   methodAndURLForSave() {
@@ -128,11 +122,13 @@ Object.assign(ToDoItem.prototype, {
   },
 
   urlFragment() {
-    switch(this.object.plannable_type) {
+    switch (this.object.plannable_type) {
       case 'wiki_page':
         return `pages/${encodeURIComponent(this.object.plannable.url)}`
       default:
-        return `${encodeURIComponent(this.object.plannable_type)}s/${encodeURIComponent(this.object.plannable_id)}`
+        return `${encodeURIComponent(this.object.plannable_type)}s/${encodeURIComponent(
+          this.object.plannable_id
+        )}`
     }
   },
 
@@ -143,11 +139,28 @@ Object.assign(ToDoItem.prototype, {
   mergeEditResult(data) {
     // here we need to preserve the necessary fields that the planner api returns outside of plannable
     // (additionally we need to preserve the transformed ones from EventDataSource)
-    const { type, context_code, all_context_codes, plannable_type, plannable_id,
-            planner_override, new_activity, submissions, html_url } = this.object
+    const {
+      type,
+      context_code,
+      all_context_codes,
+      plannable_type,
+      plannable_id,
+      planner_override,
+      new_activity,
+      submissions,
+      html_url
+    } = this.object
 
     return {
-      type, context_code, all_context_codes, plannable_type, plannable_id, planner_override, new_activity, submissions, html_url,
+      type,
+      context_code,
+      all_context_codes,
+      plannable_type,
+      plannable_id,
+      planner_override,
+      new_activity,
+      submissions,
+      html_url,
       plannable_date: data.todo_date,
       plannable: data // replace the plannable with the wiki page / discussion topic API update result
     }

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Copyright (C) 2018 - present Instructure, Inc.
 #
 # This file is part of Canvas.
@@ -94,6 +96,7 @@ describe QuizzesNext::ExportService do
 
   describe '.send_imported_content' do
     let(:new_course) { double('course') }
+    let(:root_account) { double('account') }
     let(:content_migration) { double(:started_at => 1.hour.ago) }
     let(:new_assignment1) { assignment_model(id: 1) }
     let(:new_assignment2) { assignment_model(id: 2) }
@@ -115,6 +118,9 @@ describe QuizzesNext::ExportService do
     before do
       allow(new_course).to receive(:uuid).and_return('100006')
       allow(new_course).to receive(:lti_context_id).and_return('ctx-1234')
+
+      allow(root_account).to receive(:domain).and_return('canvas.instructure.com')
+      allow(new_course).to receive(:root_account).and_return(root_account)
     end
 
     it 'emits live events for each copied assignment' do
@@ -124,7 +130,7 @@ describe QuizzesNext::ExportService do
         'original_assignment_id': old_assignment2.id
       }
 
-      expect(Canvas::LiveEvents).to receive(:quizzes_next_quiz_duplicated).twice
+      expect(Canvas::LiveEvents).to receive(:quizzes_next_quiz_duplicated).once
       ExportService.send_imported_content(new_course, content_migration, basic_import_content)
     end
 
@@ -141,13 +147,6 @@ describe QuizzesNext::ExportService do
     it 'skips assignments created prior to the current migration' do
       Assignment.where(:id => new_assignment1).update_all(:created_at => 1.day.ago)
       expect(Canvas::LiveEvents).to receive(:quizzes_next_quiz_duplicated).never
-      ExportService.send_imported_content(new_course, content_migration, basic_import_content)
-    end
-
-    it 'includes the new assignment id in the live event payload' do
-      expect(Canvas::LiveEvents).to receive(:quizzes_next_quiz_duplicated).with(
-        hash_including(new_assignment_id: new_assignment1.global_id)
-      )
       ExportService.send_imported_content(new_course, content_migration, basic_import_content)
     end
 

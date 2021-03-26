@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -17,9 +19,8 @@
 #
 
 class MessageDispatcher < Delayed::PerformableMethod
-
   def self.dispatch(message)
-    Delayed::Job.enqueue(self.new(message, :deliver),
+    Delayed::Job.enqueue(self.new(message.for_queue, :deliver),
                          run_at: message.dispatch_at,
                          priority: 25,
                          max_attempts: 15)
@@ -33,7 +34,7 @@ class MessageDispatcher < Delayed::PerformableMethod
       return
     end
 
-    Delayed::Job.enqueue(self.new(self, :deliver_batch, [messages]),
+    Delayed::Job.enqueue(self.new(self, :deliver_batch, args: [messages.map(&:for_queue)]),
                          run_at: messages.first.dispatch_at,
                          priority: 25,
                          max_attempts: 15)
@@ -47,6 +48,37 @@ class MessageDispatcher < Delayed::PerformableMethod
   protected
 
   def self.deliver_batch(messages)
+    if messages.first.is_a?(Message::Queued)
+      queued = messages.sort_by(&:created_at)
+      message_ids = []
+      messages = []
+      start_time = nil
+      previous_time = nil
+      current_partition = nil
+      queued.each_with_index do |m, i|
+        start_time ||= m.created_at
+        previous_time ||= m.created_at
+        partition = Message.infer_partition_table_name('created_at' => m.created_at)
+        current_partition ||= partition
+
+        if partition != current_partition || i == queued.length - 1
+          # catch the last item in the list, since there will be no lookback
+          if i == queued.length - 1
+            message_ids << m.id
+            previous_time = m.created_at
+          end
+          range_for_partition = start_time..previous_time
+          messages.concat(Message.in_partition('created_at' => start_time).where(id: message_ids, created_at: range_for_partition).to_a)
+          message_ids = []
+          start_time = m.created_at
+          current_partition = partition
+        end
+
+        message_ids << m.id
+        previous_time = m.created_at
+      end
+      raise ActiveRecord::RecordNotFound unless messages.length == queued.length
+    end
     messages.each do |message|
       begin
         message.deliver

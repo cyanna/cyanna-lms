@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -24,7 +26,7 @@ describe "reply attachment" do
   before() do
     @topic_title = 'discussion topic'
     course_with_teacher_logged_in
-    enable_all_rcs @course.account
+    Account.default.enable_feature!(:rce_enhancements)
     stub_rcs_config
     @topic = create_discussion(@topic_title, 'threaded')
     @student = student_in_course.user

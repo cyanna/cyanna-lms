@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -18,7 +20,7 @@
 
 module Login::CanvasHelper
   def session_timeout_enabled?
-    PluginSetting.settings_for_plugin 'sessions'
+    PluginSetting.cached_plugin_setting('sessions')&.enabled?
   end
 
   def reg_link_data(auth_type)

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -91,6 +93,20 @@ module CoursesHelper
     count == 0 ? t('#courses.settings.none', 'None') : count
   end
 
+  # Public: check for permission on a new course
+  #
+  # Sometimes we need to look up a course permission without having a course to
+  # reference. In that case it suffices to temporarily scaffold-up a course and
+  # teacher enrollment in order to be able to ask the permission system about a
+  # course permission. The default account is the one most useful for permissions
+  # questions arising from new course creation.
+  def course_permission_to?(perm_name, account = nil)
+    account ||= @domain_root_account.manually_created_courses_account
+    course = Course.new(account_id: account.id)
+    TeacherEnrollment.new(user: @current_user, course: course)
+    account.grants_right?(@current_user, perm_name.to_sym)
+  end
+
   def readable_grade(submission)
     if submission.grade and
        submission.workflow_state == 'graded'
@@ -99,7 +115,7 @@ module CoursesHelper
          submission.assignment.respond_to?(:points_possible)
          score_out_of_points_possible(submission.grade, submission.assignment.points_possible)
       else
-        i18n_grade(submission.grade, submission.grading_type).to_s.capitalize
+        i18n_grade(submission.grade, submission.grading_type).to_s
       end
     end
   end
@@ -120,6 +136,7 @@ module CoursesHelper
 
     type
   end
+  module_function :user_type
 
   def why_cant_i_enable_master_course(course)
     return nil if MasterCourses::MasterTemplate.is_master_course?(course)

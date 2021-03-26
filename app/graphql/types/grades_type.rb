@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -21,6 +23,12 @@ module Types
     graphql_name "Grades"
 
     description "Contains grade information for a course or grading period"
+
+    class GradeState < BaseEnum
+      graphql_name "GradeState"
+      value "active"
+      value "deleted"
+    end
 
     field :current_score, Float, <<~DESC, null: true
       The current score includes all graded assignments, excluding muted submissions.
@@ -46,9 +54,30 @@ module Types
       The override score. Supersedes the computed final score if set.
     DESC
 
+    field :override_grade, String, <<~DESC, null: true
+      The override grade. Supersedes the computed final grade if set.
+    DESC
+    def override_grade
+      return nil if object.override_score.blank?
+      object.effective_final_grade
+    end
+
     field :grading_period, GradingPeriodType, null: true
     def grading_period
       load_association :grading_period
     end
+
+    field :state, GradeState, method: :workflow_state, null: false
+
+    field :assignment_group, AssignmentGroupType, null: true
+    def assignment_group
+      load_association(:assignment_group)
+    end
+
+    field :enrollment, EnrollmentType, null: true
+    def enrollment
+      load_association(:enrollment)
+    end
+
   end
 end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2018 - present Instructure, Inc.
 #
@@ -17,7 +19,9 @@
 
 require_relative '../../common'
 require_relative '../../assignments/page_objects/assignment_page'
+require_relative '../../assignments/page_objects/assignment_create_edit_page'
 require_relative '../pages/moderate_page'
+require_relative '../pages/gradebook_cells_page'
 require_relative '../pages/gradebook_page'
 require_relative '../pages/student_grades_page'
 
@@ -74,13 +78,13 @@ describe 'Moderated Marking' do
       Account.default.role_overrides.create!(role: Role.find_by(name: 'TaEnrollment'), permission: 'select_final_grade', enabled: false)
 
       user_session(@teacher1)
-      AssignmentPage.visit_assignment_edit_page(@moderated_course.id, @moderated_assignment.id)
+      AssignmentCreateEditPage.visit_assignment_edit_page(@moderated_course.id, @moderated_assignment.id)
     end
 
     it 'user without the permission is not displayed in final-grader dropdown', priority: '1', test_id: 3490529 do
-      AssignmentPage.select_grader_dropdown.click
+      AssignmentCreateEditPage.select_grader_dropdown.click
 
-      expect(AssignmentPage.select_grader_dropdown).not_to include_text(@ta.name)
+      expect(AssignmentCreateEditPage.select_grader_dropdown).not_to include_text(@ta.name)
     end
   end
 
@@ -110,42 +114,42 @@ describe 'Moderated Marking' do
       ModeratePage.visit(@moderated_course.id, @moderated_assignment.id)
     end
 
-    it 'allows viewing provisional grades and posting final grade', priority: '1', test_id: 3503385 do
+    it 'allows viewing provisional grades and releasing final grade', priority: '1', test_id: 3503385 do
       # # select a provisional grade for each student
       ModeratePage.select_provisional_grade_for_student_by_position(@student1, 1)
       ModeratePage.select_provisional_grade_for_student_by_position(@student2, 2)
 
-      # # post the grades
-      ModeratePage.click_post_grades_button
+      # # release the grades
+      ModeratePage.click_release_grades_button
       driver.switch_to.alert.accept
       wait_for_ajaximations
 
       # go to gradebook
-      Gradebook.visit_gradebook(@moderated_course)
+      Gradebook.visit(@moderated_course)
 
       # expect grades to be shown
-      expect(Gradebook.grading_cell_attributes(0, 0).text).to eq('15')
-      expect(Gradebook.grading_cell_attributes(0, 1).text).to eq('12')
+      expect(Gradebook::Cells.get_grade(@student1, @moderated_assignment)).to eq('15')
+      expect(Gradebook::Cells.get_grade(@student2, @moderated_assignment)).to eq('12')
     end
 
-    it 'display to student allows viewing final grade as student', priority: '1', test_id: 3513992 do
+    it 'post to student allows viewing final grade as student', priority: '1', test_id: 3513992 do
       # select a provisional grade for each student
       ModeratePage.select_provisional_grade_for_student_by_position(@student1, 1)
       ModeratePage.select_provisional_grade_for_student_by_position(@student2, 2)
 
-      # post the grades
-      ModeratePage.click_post_grades_button
+      # release the grades
+      ModeratePage.click_release_grades_button
       driver.switch_to.alert.accept
       wait_for_ajaximations
       # wait for element to exist, means page has loaded
-      ModeratePage.grades_posted_button
+      ModeratePage.grades_released_button
 
-      # unmute using Display to Students button
-      ModeratePage.click_display_to_students_button
+      # Post grades to students
+      ModeratePage.click_post_to_students_button
       driver.switch_to.alert.accept
       wait_for_ajaximations
       # wait for element to exist, means page has loaded
-      ModeratePage.grades_posted_button
+      ModeratePage.grades_released_button
 
       # switch session to student
       user_session(@student1)
@@ -169,32 +173,32 @@ describe 'Moderated Marking' do
       ModeratePage.select_provisional_grade_for_student_by_position(@student1, 1)
       ModeratePage.select_provisional_grade_for_student_by_position(@student2, 2)
 
-      # post the grades
-      ModeratePage.click_post_grades_button
+      # release the grades
+      ModeratePage.click_release_grades_button
       driver.switch_to.alert.accept
       wait_for_ajaximations
       # wait for element to exist, means page has loaded
-      ModeratePage.grades_posted_button
+      ModeratePage.grades_released_button
 
-      # unmute using Display to Students button
-      ModeratePage.click_display_to_students_button
+      # Post grades to students
+      ModeratePage.click_post_to_students_button
       driver.switch_to.alert.accept
       wait_for_ajaximations
       # wait for element to exist, means page has loaded
-      ModeratePage.grades_visible_to_students_button
+      ModeratePage.grades_posted_to_students_button
 
       # switch session to student
       user_session(@student1)
 
       StudentGradesPage.visit_as_student(@moderated_course)
-      StudentGradesPage.comment_button.click
+      StudentGradesPage.comment_buttons.first.click
 
       expect(StudentGradesPage.comments(@moderated_assignment).count).to eq 1
       expect(StudentGradesPage.comments(@moderated_assignment).first).to include_text 'Just a comment by teacher 2'
     end
 
-    it 'display to students button disabled until grades are posted', priority: '1', test_id: 3513991 do
-      expect(ModeratePage.display_to_students_button).to be_disabled
+    it 'post to students button disabled until grades are released', priority: '1', test_id: 3513991 do
+      expect(ModeratePage.post_to_students_button).to be_disabled
     end
 
     it 'allows viewing provisional grades', priority: '1', test_id: 3503385 do

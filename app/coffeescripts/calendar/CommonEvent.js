@@ -50,11 +50,7 @@ Object.assign(CommonEvent.prototype, {
   },
 
   isAppointmentGroupFilledEvent() {
-    return (
-      this.object &&
-      this.object.child_events &&
-      this.object.child_events.length > 0
-    )
+    return this.object && this.object.child_events && this.object.child_events.length > 0
   },
 
   isAppointmentGroupEvent() {
@@ -141,6 +137,15 @@ Object.assign(CommonEvent.prototype, {
     )
   },
 
+  isDueStrictlyAtMidnight() {
+    return (
+      this.start &&
+      (this.midnightFudged ||
+        (this.start.hours() === 23 && this.start.minutes() > 59) ||
+        (this.start.hours() === 0 && this.start.minutes() === 0))
+    )
+  },
+
   isPast() {
     return this.start && this.start < fcUtil.now()
   },
@@ -198,10 +203,7 @@ Object.assign(CommonEvent.prototype, {
 
   assignmentType() {
     if (!this.assignment) return
-    if (
-      this.assignment.submission_types &&
-      this.assignment.submission_types.length
-    ) {
+    if (this.assignment.submission_types && this.assignment.submission_types.length) {
       const type = this.assignment.submission_types[0]
       if (type === 'online_quiz') return 'quiz'
       if (type === 'discussion_topic') return 'discussion'
@@ -210,7 +212,7 @@ Object.assign(CommonEvent.prototype, {
   },
 
   plannerObjectType() {
-    switch(this.object.plannable_type) {
+    switch (this.object.plannable_type) {
       case 'discussion_topic':
         return 'discussion'
       case 'wiki_page':
@@ -228,7 +230,7 @@ Object.assign(CommonEvent.prototype, {
       return type
     } else if (this.eventType === 'planner_note') {
       return 'note-light'
-    } else if (ENV.CALENDAR.BETTER_SCHEDULER) {
+    } else if (ENV.CALENDAR.SHOW_SCHEDULER) {
       if (
         this.isAppointmentGroupEvent() &&
         (this.isAppointmentGroupFilledEvent() || this.appointmentGroupEventStatus === 'Reserved')

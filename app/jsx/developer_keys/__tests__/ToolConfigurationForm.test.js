@@ -20,10 +20,16 @@ import React from 'react'
 import {mount} from 'enzyme'
 import ToolConfigurationForm from '../ToolConfigurationForm'
 
-function newProps() {
+function newProps(overrides = {}) {
   return {
     toolConfiguration: {name: 'Test Tool', url: 'https://www.test.com/launch'},
-    toolConfigurationUrl: 'https://www.test.com/config.json'
+    toolConfigurationUrl: 'https://www.test.com/config.json',
+    validScopes: {},
+    validPlacements: [],
+    dispatch: jest.fn(),
+    updateConfigurationMethod: jest.fn(),
+    configurationMethod: 'json',
+    ...overrides
   }
 }
 
@@ -41,21 +47,19 @@ describe('when configuration method is by JSON', () => {
 
   it('renders the tool configuration JSON in a text area', () => {
     const textArea = wrapper.find('TextArea')
-    const expectedString = JSON.stringify(newProps().toolConfiguration)
-    expect(textArea.text()).toEqual(expect.stringContaining(expectedString))
+    expect(textArea.text()).toEqual(expect.stringContaining(newProps().toolConfiguration.url))
   })
 
   it('transitions to configuring by URL when the url option is selected', () => {
     const select = wrapper.find('Select')
     select.instance().props.onChange({}, {value: 'url'})
-    expect(wrapper.state().configurationType).toEqual('url')
+    expect(wrapper.instance().props.updateConfigurationMethod).toHaveBeenCalled()
   })
 })
 
 describe('when configuration method is by URL', () => {
   beforeEach(() => {
-    wrapper = mount(<ToolConfigurationForm {...newProps()} />)
-    wrapper.setState({configurationType: 'url'})
+    wrapper = mount(<ToolConfigurationForm {...newProps({configurationMethod: 'url'})} />)
   })
 
   it('renders the tool configuration URL in a text input', () => {
@@ -67,6 +71,16 @@ describe('when configuration method is by URL', () => {
   it('transitions to configuring by JSON when the json option is selected', () => {
     const select = wrapper.find('Select')
     select.instance().props.onChange({}, {value: 'json'})
-    expect(wrapper.state().configurationType).toEqual('json')
+    expect(wrapper.instance().props.updateConfigurationMethod).toHaveBeenCalled()
+  })
+})
+
+describe('when configuration method is manual', () => {
+  beforeEach(() => {
+    wrapper = mount(<ToolConfigurationForm {...newProps({configurationMethod: 'manual'})} />)
+  })
+
+  it('renders the manual configuration form', () => {
+    expect(wrapper.find('ManualConfigurationForm').exists()).toEqual(true)
   })
 })

@@ -17,10 +17,10 @@
  */
 
 import $ from 'jquery'
-import tinymce from 'compiled/editor/stocktiny'
 import EditorAccessibility from 'compiled/editor/editorAccessibility'
 
 const fixtures = $('#fixtures')
+let label = null
 let textarea = null
 let acc = null
 let activeEditorNodes = null
@@ -39,7 +39,9 @@ const initializedTest = (description, fn) => {
 QUnit.module('EditorAccessibility', {
   setup() {
     initPromise = new Promise(resolve => {
+      label = $("<label for='a42'>This is a label</label>")
       textarea = $("<textarea id='a42' data-rich_text='true'></textarea>")
+      fixtures.append(label)
       fixtures.append(textarea)
       tinymce
         .init({
@@ -53,6 +55,7 @@ QUnit.module('EditorAccessibility', {
     })
   },
   teardown() {
+    label.remove()
     textarea.remove()
     fixtures.empty()
     acc = null
@@ -104,4 +107,9 @@ initializedTest('accessibilize() hides the menubar, Alt+F9 shows it', () => {
 initializedTest('accessiblize() gives an aria-label to the role=application div', () => {
   acc.accessiblize()
   ok($(acc.$el).attr('aria-label'), 'aria-label has a value')
+})
+
+initializedTest('accessiblize() gives an aria-label to the rce body element', () => {
+  acc.accessiblize()
+  equal($(acc.editor.getBody()).attr('aria-label'), 'This is a label')
 })

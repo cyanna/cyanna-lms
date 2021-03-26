@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - 2014 Instructure, Inc.
 #
@@ -154,7 +156,8 @@ describe "API Authentication", type: :request do
           expect(response).to be_successful
           json = JSON.parse(response.body)
           expect(json.size).to eq 1
-          expect(json.first['enrollments']).to eq [{'type' => 'teacher', 'role' => 'TeacherEnrollment', 'role_id' => teacher_role.id, 'user_id' => @user.id, 'enrollment_state' => 'invited'}]
+          expect(json.first['enrollments']).to eq [{'type' => 'teacher', 'role' => 'TeacherEnrollment', 'role_id' => teacher_role.id,
+            'user_id' => @user.id, 'enrollment_state' => 'invited', 'limit_privileges_to_course_section' => false}]
           expect(AccessToken.authenticate(token)).to eq AccessToken.last
           expect(AccessToken.last.purpose).to eq 'fun'
 
@@ -194,16 +197,8 @@ describe "API Authentication", type: :request do
         skip("requires SAML extension") unless AuthenticationProvider::SAML.enabled?
         account_with_saml(account: Account.default)
         flow do
-          allow_any_instance_of(Onelogin::Saml::Response).to receive(:settings=)
-          allow_any_instance_of(Onelogin::Saml::Response).to receive(:logger=)
-          allow_any_instance_of(Onelogin::Saml::Response).to receive(:is_valid?).and_return(true)
-          allow_any_instance_of(Onelogin::Saml::Response).to receive(:success_status?).and_return(true)
-          allow_any_instance_of(Onelogin::Saml::Response).to receive(:name_id).and_return('test1@example.com')
-          allow_any_instance_of(Onelogin::Saml::Response).to receive(:name_qualifier).and_return(nil)
-          allow_any_instance_of(Onelogin::Saml::Response).to receive(:session_index).and_return(nil)
-          allow_any_instance_of(Onelogin::Saml::Response).to receive(:issuer).and_return("saml_entity")
-          allow_any_instance_of(Onelogin::Saml::Response).to receive(:trusted_roots).and_return([])
           response = SAML2::Response.new
+          response.issuer = SAML2::NameID.new('saml_entity')
           response.assertions << (assertion = SAML2::Assertion.new)
           assertion.subject = SAML2::Subject.new
           assertion.subject.name_id = SAML2::NameID.new('test1@example.com')
@@ -235,7 +230,7 @@ describe "API Authentication", type: :request do
           follow_redirect!
           expect(response).to redirect_to("/login/cas")
           follow_redirect!
-          expect(response).to redirect_to(controller.delegated_auth_redirect_uri(cas.add_service_to_login_url(url_for(controller: 'login/cas', action: :new))))
+          expect(response).to redirect_to(cas.add_service_to_login_url(url_for(controller: 'login/cas', action: :new)))
 
           get "/login/cas", params: {:ticket => 'ST-abcd'}
           expect(response).to be_redirect
@@ -430,7 +425,8 @@ describe "API Authentication", type: :request do
               expect(response).to be_successful
               json = JSON.parse(response.body)
               expect(json.size).to eq 1
-              expect(json.first['enrollments']).to eq [{'type' => 'teacher', 'role' => 'TeacherEnrollment', 'role_id' => teacher_role.id, 'user_id' => @user.id, 'enrollment_state' => 'invited'}]
+              expect(json.first['enrollments']).to eq [{'type' => 'teacher', 'role' => 'TeacherEnrollment', 'role_id' => teacher_role.id,
+                'user_id' => @user.id, 'enrollment_state' => 'invited', 'limit_privileges_to_course_section' => false}]
               expect(AccessToken.last).to eq AccessToken.authenticate(token)
             end
           end

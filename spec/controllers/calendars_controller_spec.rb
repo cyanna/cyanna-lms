@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -41,6 +43,14 @@ describe CalendarsController do
       expect(assigns[:contexts]).not_to be_empty
       expect(assigns[:contexts][0]).to eql(@user)
       expect(assigns[:contexts][1]).to eql(@course)
+    end
+
+    it "only enrolled students can make reservations" do
+      course_event
+      get 'show', params: {:user_id => @user.id}
+      expect(response).to be_successful
+      expect(assigns[:contexts_json][0][:can_make_reservation]).to eql(false)
+      expect(assigns[:contexts_json][1][:can_make_reservation]).to eql(true)
     end
 
     it "js_env DUE_DATE_REQUIRED_FOR_ACCOUNT is true when AssignmentUtil.due_date_required_for_account? == true" do

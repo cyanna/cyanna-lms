@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -16,8 +18,8 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 
 require_relative 'common'
-require_relative 'announcements/announcement_index_page'
-require_relative 'announcements/announcement_new_edit_page'
+require_relative 'announcements/pages/announcement_index_page'
+require_relative 'announcements/pages/announcement_new_edit_page'
 require_relative 'helpers/announcements_common'
 require_relative 'helpers/legacy_announcements_common'
 require_relative 'helpers/conferences_common'
@@ -81,7 +83,7 @@ describe "groups" do
           category = course.group_categories.create!(name: 'category')
           course.groups.create!(name: "Test Group", group_category: category)
           course.groups.first.add_user student
-          course.update_attributes(conclude_at: 1.day.ago, workflow_state: 'completed')
+          course.update(conclude_at: 1.day.ago, workflow_state: 'completed')
 
           user_session(student)
           get "/groups/#{course.groups.first.id}"
@@ -103,7 +105,7 @@ describe "groups" do
           category = course.group_categories.create!(name: 'category')
           course.groups.create!(name: "Test Group", group_category: category)
           course.groups.first.add_user student
-          course.update_attributes(conclude_at: 1.day.ago, workflow_state: 'completed')
+          course.update(conclude_at: 1.day.ago, workflow_state: 'completed')
 
           user_session(teacher)
           url = "/groups/#{course.groups.first.id}"
@@ -279,7 +281,7 @@ describe "groups" do
         verify_no_course_user_access(discussions_page)
       end
 
-      it "should allow discussions to be deleted by their creator", priority: "1", test_id: 329626 do
+      it "should allow discussions to be deleted by their creator", priority: "1", test_id: 329626, ignore_js_errors: true do
         DiscussionTopic.create!(context: @testgroup.first, user: @user, title: 'Delete Me', message: 'Discussion text')
         get discussions_page
         expect(ff('.discussion-title').size).to eq 1
@@ -329,10 +331,15 @@ describe "groups" do
     end
 
     #-------------------------------------------------------------------------------------------------------------------
-    describe "pages page" do
+    # We have the funky indenting here because we will remove this once the granular
+    # permission stuff is released, and I don't want to complicate the git history
+    # for this file
+    RSpec.shared_examples "group_pages_student_granular_permissions" do
+      describe "pages page" do
       it_behaves_like 'pages_page', :student
 
       it "should allow group members to create a page", priority: "1", test_id: 273611 do
+        skip_if_firefox('known issue with firefox https://bugzilla.mozilla.org/show_bug.cgi?id=1335085')
         get pages_page
         manually_create_wiki_page('yo','this be a page')
       end
@@ -351,6 +358,11 @@ describe "groups" do
         expect(f('.new_page')).to be_displayed
         verify_no_course_user_access(pages_page)
       end
+    end
+    end
+
+    describe 'With granular permissions' do
+      it_behaves_like "group_pages_student_granular_permissions"
     end
 
     #-------------------------------------------------------------------------------------------------------------------
@@ -378,7 +390,7 @@ describe "groups" do
       end
 
       it "should only allow group members to access files", priority: "1", test_id: 273626 do
-        expect_new_page_load { get files_page }
+        get files_page
         verify_no_course_user_access(files_page)
       end
 

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -21,8 +23,6 @@ describe "master courses - child courses - quiz locking" do
   include_context "in-process server selenium tests"
 
   before :once do
-    Account.default.enable_feature!(:master_courses)
-    enable_all_rcs Account.default
 
     qd = { question_type: "text_only_question", id: 1, question_name: 'the hardest question ever'}.with_indifferent_access
     due_date = format_date_for_view(Time.zone.now - 1.month)
@@ -44,6 +44,7 @@ describe "master courses - child courses - quiz locking" do
 
   before :each do
     user_session(@teacher)
+    Account.default.enable_feature!(:rce_enhancements)
     stub_rcs_config
   end
 

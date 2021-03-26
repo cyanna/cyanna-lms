@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -115,6 +117,7 @@ module CC
               else
                 meta_field(qm_node, 'question_type', question['question_type'])
                 meta_field(qm_node, 'points_possible', question['points_possible'])
+                meta_field(qm_node, 'original_answer_ids', question['answers'].map{|a| a['id']}.join(","))
                 if question[:is_quiz_question]
                   meta_field(qm_node, 'assessment_question_identifierref', aq_mig_id(question))
                 end
@@ -357,8 +360,8 @@ module CC
                   or_node.varequal exact, :respident => 'response1'
                   unless answer['margin'].blank?
                     or_node.and do |and_node|
-                      exact = BigDecimal.new(answer['exact'].to_s)
-                      margin = BigDecimal.new(answer['margin'].to_s)
+                      exact = BigDecimal(answer['exact'].to_s)
+                      margin = BigDecimal(answer['margin'].to_s)
                       and_node.vargte((exact - margin).to_f, :respident => 'response1')
                       and_node.varlte((exact + margin).to_f, :respident => 'response1')
                     end

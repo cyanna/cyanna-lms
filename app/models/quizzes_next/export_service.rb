@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Copyright (C) 2018 - present Instructure, Inc.
 #
 # This file is part of Canvas.
@@ -51,6 +53,7 @@ module QuizzesNext
       end
 
       def send_imported_content(new_course, content_migration, imported_content)
+        send_quizzes_next_quiz_duplicated = false
         imported_content[:assignments].each do |assignment|
           next if QuizzesNext::Service.assignment_not_in_export?(assignment)
           next unless QuizzesNext::Service.assignment_duplicated?(assignment)
@@ -59,6 +62,7 @@ module QuizzesNext
           new_assignment = Assignment.find(new_assignment_id)
           next unless new_assignment.created_at > content_migration.started_at # no more recopies
 
+          send_quizzes_next_quiz_duplicated = true
           old_assignment_id = assignment.fetch(:original_assignment_id)
           old_assignment = Assignment.find(old_assignment_id)
 
@@ -66,15 +70,15 @@ module QuizzesNext
           new_assignment.workflow_state = 'duplicating'
           new_assignment.duplication_started_at = Time.zone.now
           new_assignment.save!
+        end
 
+        if send_quizzes_next_quiz_duplicated
           Canvas::LiveEvents.quizzes_next_quiz_duplicated(
             {
-              new_assignment_id: new_assignment.global_id,
               original_course_uuid: imported_content[:original_course_uuid],
-              original_resource_link_id: assignment[:original_resource_link_id],
               new_course_uuid: new_course.uuid,
-              new_course_id: new_course.lti_context_id,
-              new_resource_link_id: new_assignment.lti_resource_link_id
+              new_course_resource_link_id: new_course.lti_context_id,
+              domain: new_course.root_account&.domain(ApplicationController.test_cluster_name)
             }
           )
         end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -26,11 +28,11 @@ describe "announcements" do
     before :once do
       @teacher = user_with_pseudonym(active_user: true)
       course_with_teacher(user: @teacher, active_course: true, active_enrollment: true)
-      enable_all_rcs @course.account
     end
 
     before :each do
       user_session(@teacher)
+      Account.default.enable_feature!(:rce_enhancements)
       stub_rcs_config
     end
 
@@ -61,9 +63,9 @@ describe "announcements" do
       end
 
       it "should perform front-end validation for message", priority: "1", test_id: 220366 do
+        skip("Skip for now -- message box is not emitted with enhanced RCE LS-1851")
         topic_title = 'new topic with file'
         get url
-
         expect_new_page_load { f('#add_announcement').click }
         replace_content(f('input[name=title]'), topic_title)
         filename, fullpath, data = get_file("testfile5.zip")
@@ -77,7 +79,7 @@ describe "announcements" do
       it "should add an attachment to a graded topic", priority: "1", test_id: 220367 do # no
         what_to_create == DiscussionTopic ? @course.discussion_topics.create!(:title => 'graded attachment topic', :user => @user) : announcement_model(:title => 'graded attachment topic', :user => @user)
         if what_to_create == DiscussionTopic
-          what_to_create.last.update_attributes(:assignment => @course.assignments.create!(:name => 'graded topic assignment'))
+          what_to_create.last.update(:assignment => @course.assignments.create!(:name => 'graded topic assignment'))
         end
         get url
         expect_new_page_load { f('.ic-announcement-row h3').click }

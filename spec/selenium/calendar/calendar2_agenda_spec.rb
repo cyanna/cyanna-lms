@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -23,11 +25,13 @@ describe "calendar2" do
   include Calendar2Common
 
   before(:once) do
-    # or some stuff we need to click is "below the fold"
-    make_full_screen
+    Account.find_or_create_by!(id: 0).update_attributes(name: 'Dummy Root Account', workflow_state: 'deleted', root_account_id: nil)
   end
 
   before(:each) do
+    # or some stuff we need to click is "below the fold"
+
+
     Account.default.tap do |a|
       a.settings[:show_scheduler] = true
       a.save!
@@ -57,7 +61,7 @@ describe "calendar2" do
         expect(all_agenda_items.length).to eq 1
       end
 
-      it "should display agenda events" do
+      it "should display agenda events", :xbrowser do
         load_agenda_view
         expect(fj('.agenda-wrapper:visible')).to be_present
       end
@@ -158,7 +162,7 @@ describe "calendar2" do
 
         agenda_item.click
         delete_event_button.click
-        fj('.ui-dialog:visible .btn-primary').click
+        fj('.ui-dialog:visible .btn-danger').click
 
         expect(f("#content")).not_to contain_css('.agenda-event__item-container')
       end
@@ -171,7 +175,7 @@ describe "calendar2" do
 
         agenda_item.click
         delete_event_button.click
-        fj('.ui-dialog:visible .btn-primary').click
+        fj('.ui-dialog:visible .btn-danger').click
 
         expect(f("#content")).not_to contain_css('.agenda-event__item-container')
       end
@@ -276,7 +280,7 @@ describe "calendar2" do
 
           agenda_item.click
           delete_event_button.click
-          fj('.ui-dialog:visible .btn-primary').click
+          fj('.ui-dialog:visible .btn-danger').click
 
           expect(f("#content")).not_to contain_css('.agenda-event__item-container')
         end
@@ -335,6 +339,15 @@ describe "calendar2" do
           expect(f('.event-details-timestring')).to include_text(format_time_for_view(test_date))
         end
       end
+
+      it "shows all appointment groups" do
+        create_appointment_group(contexts: [@course])
+        create_appointment_group(contexts: [@course])
+
+        get "/calendar2#view_name=agenda&view_start=#{(Time.zone.today + 1.day).strftime}"
+        wait_for_ajaximations
+        expect(all_agenda_items.count).to equal(2)
+      end
     end
   end
 
@@ -355,19 +368,18 @@ describe "calendar2" do
       agenda_item.click
       expect(f("#content")).not_to contain_css('.event-details .delete_event_link')
     end
-  end
 
-  context "agenda view with BETTER_SCHEDULER enabled" do
-    before(:each) do
-      account = Account.default
-      account.settings[:agenda_view] = true
-      account.save!
-      account.enable_feature! :better_scheduler
+    it "should display agenda events" do
+      load_agenda_view
+      expect(fj('.agenda-wrapper:visible')).to be_present
     end
 
-    context "as a student" do
+    context "agenda view" do
       before(:each) do
-        course_with_student_logged_in
+        account = Account.default
+        account.settings[:agenda_view] = true
+        account.save!
+
         create_appointment_group(contexts: [@course])
         create_appointment_group(contexts: [@course])
       end
@@ -395,20 +407,5 @@ describe "calendar2" do
         expect(agenda_item).to include_text 'Reserved'
       end
     end
-
-    context "as a teacher" do
-      before(:each) do
-        course_with_teacher_logged_in
-        create_appointment_group(contexts: [@course])
-        create_appointment_group(contexts: [@course])
-      end
-
-      it "shows all appointment groups" do
-        get "/calendar2#view_name=agenda&view_start=#{(Time.zone.today + 1.day).strftime}"
-        wait_for_ajaximations
-        expect(all_agenda_items.count).to equal(2)
-      end
-    end
   end
-
 end

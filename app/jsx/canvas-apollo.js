@@ -16,27 +16,86 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-import $ from 'jquery'
+import getCookie from './shared/helpers/getCookie'
 import gql from 'graphql-tag'
-import ApolloClient from 'apollo-boost'
-import {InMemoryCache} from 'apollo-cache-inmemory'
+import {ApolloClient} from 'apollo-client'
+import {InMemoryCache, IntrospectionFragmentMatcher} from 'apollo-cache-inmemory'
+import {HttpLink} from 'apollo-link-http'
+import {onError} from 'apollo-link-error'
+import {ApolloLink} from 'apollo-link'
 import {ApolloProvider, Query} from 'react-apollo'
+import introspectionQueryResultData from './fragmentTypes.json'
+import {withClientState} from 'apollo-link-state'
 
-const client = new ApolloClient({
-  uri: '/api/graphql',
-  request: operation => {
+function createConsoleErrorReportLink() {
+  return onError(({graphQLErrors, networkError}) => {
+    if (graphQLErrors)
+      graphQLErrors.map(({message, locations, path}) =>
+        console.log(`[GraphQL error]: Message: ${message}, Location: ${locations}, Path: ${path}`)
+      )
+    if (networkError) console.log(`[Network error]: ${networkError}`)
+  })
+}
+
+function setHeadersLink() {
+  return new ApolloLink((operation, forward) => {
     operation.setContext({
       headers: {
         'X-Requested-With': 'XMLHttpRequest',
         'GraphQL-Metrics': true,
-        'X-CSRF-Token': $.cookie('_csrf_token')
+        'X-CSRF-Token': getCookie('_csrf_token')
       }
     })
-  },
-  cache: new InMemoryCache({
-    addTypename: true,
-    dataIdFromObject: object => object.id || null
+    return forward(operation)
   })
-})
+}
 
-export {client, gql, ApolloProvider, Query}
+function createHttpLink() {
+  return new HttpLink({
+    uri: '/api/graphql',
+    credentials: 'same-origin'
+  })
+}
+
+function createCache() {
+  return new InMemoryCache({
+    addTypename: true,
+    dataIdFromObject: object => {
+      if (object.id) {
+        return object.id
+      } else if (object._id && object.__typename) {
+        return object.__typename + object._id
+      } else {
+        return null
+      }
+    },
+    fragmentMatcher: new IntrospectionFragmentMatcher({
+      introspectionQueryResultData
+    })
+  })
+}
+
+function createClient(opts = {}) {
+  const cache = createCache()
+  const defaults = opts.defaults || {}
+  const resolvers = opts.resolvers || {}
+  const stateLink = withClientState({
+    cache,
+    resolvers,
+    defaults
+  })
+
+  const links =
+    createClient.mockLink == null
+      ? [createConsoleErrorReportLink(), setHeadersLink(), stateLink, createHttpLink()]
+      : [createConsoleErrorReportLink(), stateLink, createClient.mockLink]
+
+  const client = new ApolloClient({
+    link: ApolloLink.from(links),
+    cache
+  })
+
+  return client
+}
+
+export {createClient, gql, ApolloProvider, Query, createCache}

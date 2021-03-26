@@ -18,7 +18,7 @@
 # rubocop:disable Metrics/LineLength
 module Lti::Ims
   # @API Names and Role
-  # @internal
+  #
   # API for IMS Names and Role Provisioning Service version 2 .
   #
   # Official specification: https://www.imsglobal.org/spec/lti-nrps/v2p0
@@ -261,8 +261,6 @@ module Lti::Ims
     # rubocop:enable Metrics/LineLength
     include Concerns::AdvantageServices
 
-    skip_before_action :load_user
-
     MIME_TYPE = 'application/vnd.ims.lti-nrps.v2.membershipcontainer+json'.freeze
 
     # @API List Course Memberships
@@ -279,7 +277,7 @@ module Lti::Ims
     #   If the `rlid` parameter is also present, it will be 'and-ed' together with this parameter
     #
     # @argument limit [String]
-    #   May be used to limit the number of NamesAndRoleMemberships returned in a page
+    #   May be used to limit the number of NamesAndRoleMemberships returned in a page. Defaults to 50.
     #
     # @returns NamesAndRoleMemberships
     def course_index
@@ -302,7 +300,7 @@ module Lti::Ims
     #   If the `rlid` parameter is also present, it will be 'and-ed' together with this parameter
     #
     # @argument limit [String]
-    #   May be used to limit the number of NamesAndRoleMemberships returned in a page
+    #   May be used to limit the number of NamesAndRoleMemberships returned in a page. Defaults to 50.
     #
     # @returns NamesAndRoleMemberships
     def group_index
@@ -313,8 +311,8 @@ module Lti::Ims
       polymorphic_url([context, :names_and_roles])
     end
 
-    def tool_permissions_granted?
-      access_token&.claim('scopes')&.split(' ')&.include?(TokenScopes::LTI_NRPS_V2_SCOPE)
+    def scopes_matcher
+      self.class.all_of(TokenScopes::LTI_NRPS_V2_SCOPE)
     end
 
     def context

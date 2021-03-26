@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -28,10 +30,43 @@ class Message < ActiveRecord::Base
   include Messages::PeerReviewsHelper
   include Messages::SendStudentNamesHelper
 
+  include CanvasPartman::Concerns::Partitioned
+  self.partitioning_strategy = :by_date
+  self.partitioning_interval = :weeks
+
   extend TextHelper
 
   MAX_TWITTER_MESSAGE_LENGTH = 140
 
+  class QueuedNotFound < StandardError; end
+
+  class Queued
+    # use this to queue messages for delivery so we find them using the created_at in the scope
+    # instead of using id alone when reconstituting the AR object
+    attr_accessor :id, :created_at
+    def initialize(id, created_at)
+      @id, @created_at = id, created_at
+    end
+
+    delegate :dispatch_at, :to => :message
+
+    def deliver
+      message.deliver
+    rescue QueuedNotFound => e
+      raise Delayed::RetriableError, "Message does not (yet?) exist"
+    end
+
+    def message
+      return @message if @message.present?
+      @message = Message.in_partition('id' => id, 'created_at' => @created_at).where(:id => @id, :created_at => @created_at).first || Message.where(:id => @id).first
+      raise QueuedNotFound if @message.nil?
+      @message
+    end
+  end
+
+  def for_queue
+    Queued.new(self.id, self.created_at)
+  end
 
   # Associations
   belongs_to :communication_channel
@@ -51,6 +86,7 @@ class Message < ActiveRecord::Base
   before_save :move_messages_for_deleted_users
 
   # Validations
+  validate :prevent_updates
   validates :body, length: {maximum: maximum_text_length}, allow_nil: true, allow_blank: true
   validates :html_body, length: {maximum: maximum_text_length}, allow_nil: true, allow_blank: true
   validates :transmission_errors, length: {maximum: maximum_text_length}, allow_nil: true, allow_blank: true
@@ -60,6 +96,13 @@ class Message < ActiveRecord::Base
   validates :subject, length: {maximum: maximum_text_length}, allow_nil: true, allow_blank: true
   validates :from_name, length: {maximum: maximum_text_length}, allow_nil: true, allow_blank: true
   validates :reply_to_name, length: {maximum: maximum_string_length}, allow_nil: true, allow_blank: true
+
+  def prevent_updates
+    unless self.new_record?
+      # e.g. Message.where(:id => self.id, :created_at => self.created_at).update_all(...)
+      self.errors.add(:base, "Regular saving on messages is disabled - use save_using_update_all")
+    end
+  end
 
   # Stream policy
   on_create_send_to_streams do
@@ -75,7 +118,7 @@ class Message < ActiveRecord::Base
     state :created do
       event :stage, :transitions_to => :staged do
         self.dispatch_at = Time.now.utc + self.delay_for
-        if self.to != 'dashboard' && !@stage_without_dispatch
+        if self.to != 'dashboard'
           MessageDispatcher.dispatch(self)
         end
       end
@@ -140,10 +183,26 @@ class Message < ActiveRecord::Base
     end
   end
 
+  # turns out we can override this method inside the workflow gem to get a custom save for workflow transitions
+  def persist_workflow_state(new_state)
+    self.workflow_state = new_state
+    self.save_using_update_all
+  end
+
+  def save_using_update_all
+    self.shard.activate do
+      self.updated_at = Time.now.utc
+      updates = Hash[self.changes_to_save.map{|k, v| [k, v.last]}]
+      self.class.in_partition(attributes).where(:id => self.id, :created_at => self.created_at).update_all(updates)
+      self.clear_changes_information
+    end
+  end
+
   # Named scopes
   scope :for, lambda { |context| where(:context_type => context.class.base_class.to_s, :context_id => context) }
 
   scope :after, lambda { |date| where("messages.created_at>?", date) }
+  scope :more_recent_than, lambda { |date| where("messages.created_at>? AND messages.dispatch_at>?", date, date) }
 
   scope :to_dispatch, -> {
     where("messages.workflow_state='staged' AND messages.dispatch_at<=? AND 'messages.to'<>'dashboard'", Time.now.utc)
@@ -170,6 +229,31 @@ class Message < ActiveRecord::Base
   scope :staged, -> { where("messages.workflow_state='staged' AND messages.dispatch_at>?", Time.now.utc) }
 
   scope :in_state, lambda { |state| where(:workflow_state => Array(state).map(&:to_s)) }
+
+  scope :at_timestamp, lambda { |timestamp| where("created_at >= ? AND created_at < ?", Time.at(timestamp.to_i), Time.at(timestamp.to_i + 1)) }
+
+  # an optimization for queries that would otherwise target the main table to
+  # make them target the specific partition table. Naturally this only works if
+  # the records all reside within the same partition!!!
+  #
+  # for example, this takes us from:
+  #
+  #     Message.where(id: 3)
+  #     => SELECT "messages".* FROM "messages" WHERE "messages"."id" = 3
+  # to:
+  #
+  #     Message.in_partition(Message.last.attributes).where(id: 3)
+  #     => SELECT "messages_2020_35".* FROM "messages_2020_35" WHERE "messages_2020_35"."id" = 3
+  #
+  scope :in_partition, lambda { |attrs|
+    dup.instance_eval do
+      tap do
+        @table = klass.arel_table_from_key_values(attrs)
+        @predicate_builder = predicate_builder.dup
+        @predicate_builder.instance_variable_set('@table', ActiveRecord::TableMetadata.new(klass, @table))
+      end
+    end
+  }
 
   #Public: Helper methods for grabbing a user via the "from" field and using it to
   #populate the avatar, name, and email in the conversation email notification
@@ -200,6 +284,8 @@ class Message < ActiveRecord::Base
   def author_avatar_url
     url = author.try(:avatar_url)
     URI.join("#{HostUrl.protocol}://#{HostUrl.context_host(author_account)}", url).to_s if url
+  rescue URI::InvalidURIError
+    nil
   end
 
   def author_short_name
@@ -253,6 +339,28 @@ class Message < ActiveRecord::Base
     end
   end
 
+  # overwrite existing html_to_text so that messages with links can have the ids
+  # translated to be shard aware while preserving the link_root_account for the
+  # host.
+  def html_to_text(html, *opts)
+    super(transpose_url_ids(html), *opts)
+  end
+
+  # overwrite existing html_to_simple_html so that messages with links can have
+  # the ids translated to be shard aware while preserving the link_root_account
+  # for the host.
+  def html_to_simple_html(html, *opts)
+    super(transpose_url_ids(html), *opts)
+  end
+
+  def transpose_url_ids(html)
+    url_helper = Api::Html::UrlProxy.new(self, self.context,
+                                         HostUrl.context_host(self.link_root_account),
+                                         HostUrl.protocol,
+                                         target_shard: self.link_root_account.shard)
+    Api::Html::Content.rewrite_outgoing(html, self.link_root_account, url_helper)
+  end
+
   # infer a root account associated with the context that the user can log in to
   def link_root_account
     @root_account ||= begin
@@ -269,7 +377,7 @@ class Message < ActiveRecord::Base
       context = context.context if context.respond_to?(:context)
       context = context.account if context.respond_to?(:account)
       context = context.root_account if context.respond_to?(:root_account)
-      if context
+      if context && context.respond_to?(:root_account)
         p = SisPseudonym.for(user, context, type: :implicit, require_sis: false)
         context = p.account if p
       else
@@ -316,7 +424,9 @@ class Message < ActiveRecord::Base
   #
   # Returns nothing.
   def stage_without_dispatch!
-    @stage_without_dispatch = true
+    return if state == :bounced
+    self.dispatch_at = Time.now.utc + self.delay_for
+    self.workflow_state = 'staged'
   end
 
   # Public: Stage the message during the dispatch process. Messages travel
@@ -395,6 +505,7 @@ class Message < ActiveRecord::Base
     path = Canvas::MessageHelper.find_message_path(filename)
 
     if !(File.exist?(path) rescue false)
+      return false if filename.include?('slack')
       filename = self.notification.name.downcase.gsub(/\s/, '_') + ".email.erb"
       path = Canvas::MessageHelper.find_message_path(filename)
     end
@@ -427,13 +538,13 @@ class Message < ActiveRecord::Base
     return nil unless template
 
     # Add the attribute 'inner_html' with the value of inner_html into the _binding
-    @output_buffer = nil
+    @output_buffer = ActionView::OutputBuffer.new
     inner_html = eval(ActionView::Template::Handlers::ERB::Erubi.new(template, :bufvar => '@output_buffer').src, binding, template_path)
     setter = eval "inner_html = nil; lambda { |v| inner_html = v }", binding
     setter.call(inner_html)
 
     layout_path = Canvas::MessageHelper.find_message_path('_layout.email.html.erb')
-    @output_buffer = nil
+    @output_buffer = ActionView::OutputBuffer.new
     eval(ActionView::Template::Handlers::ERB::Erubi.new(File.read(layout_path)).src, binding, layout_path)
   ensure
     @i18n_scope = orig_i18n_scope
@@ -453,8 +564,7 @@ class Message < ActiveRecord::Base
   # Returns message body
   def populate_body(message_body_template, path_type, binding, filename)
     # Build the body content based on the path type
-    self.body = eval(Erubi::Engine.new(message_body_template,
-      bufvar: '@output_buffer').src, binding, filename)
+    self.body = eval(Erubi::Engine.new(message_body_template, bufvar: '@output_buffer').src, binding, filename)
     self.html_body = apply_html_template(binding) if path_type == 'email'
 
     # Append a footer to the body if the path type is email
@@ -462,7 +572,10 @@ class Message < ActiveRecord::Base
       footer_path = Canvas::MessageHelper.find_message_path('_email_footer.email.erb')
       raw_footer_message = File.read(footer_path)
       footer_message = eval(Erubi::Engine.new(raw_footer_message, :bufvar => "@output_buffer").src, nil, footer_path)
-      if footer_message.present?
+      # currently, _email_footer.email.erb only contains a way for users to change notification prefs
+      # they can only change it if they are registered in the first place
+      # do not show this for emails telling users to register
+      if footer_message.present? && !self.notification&.registration?
         self.body = <<-END.strip_heredoc
           #{self.body}
 
@@ -501,6 +614,10 @@ class Message < ActiveRecord::Base
     # Determine the message template file to be used in the message
     filename = template_filename(path_type)
     message_body_template = get_template(filename)
+    if !message_body_template && path_type == 'slack'
+      filename = template_filename('sms')
+      message_body_template = get_template(filename)
+    end
 
     context, asset, user, delayed_messages, data = [self.context,
       self.context, self.user, @delayed_messages, @data]
@@ -543,19 +660,54 @@ class Message < ActiveRecord::Base
       return nil
     end
 
-    delivery_method = "deliver_via_#{path_type}".to_sym
-
-    if not delivery_method or not respond_to?(delivery_method, true)
-      logger.warn("Could not set delivery_method from #{path_type}")
+    if path_type == 'slack' && !context_root_account.settings[:encrypted_slack_key]
+      logger.warn('Could not send slack message without configured key')
       return nil
     end
 
-    check_acct = (user && user.account) || Account.site_admin
-    if check_acct.feature_enabled?(:notification_service) && path_type != "yo"
+    check_acct = root_account || user&.account || Account.site_admin
+    if path_type == 'sms'
+      if Notification.types_to_send_in_sms(check_acct).exclude?(notification_name)
+        return skip_and_cancel
+      end
+    end
+
+    if path_type == "push" && !check_acct.enable_push_notifications?
+      return skip_and_cancel
+    end
+
+    if path_type == 'push' && Account.site_admin.feature_enabled?(:reduce_push_notifications)
+      if Notification.types_to_send_in_push.exclude?(notification_name)
+        return skip_and_cancel
+      end
+    end
+
+    InstStatsd::Statsd.increment("message.deliver.#{path_type}.#{notification_name}",
+                                 short_stat: 'message.deliver',
+                                 tags: {path_type: path_type, notification_name: notification_name})
+
+    global_account_id = Shard.global_id_for(root_account_id, self.shard)
+    InstStatsd::Statsd.increment("message.deliver.#{path_type}.#{global_account_id}",
+                                 short_stat: 'message.deliver_per_account',
+                                 tags: {path_type: path_type, root_account_id: global_account_id})
+
+    if check_acct.feature_enabled?(:notification_service)
       enqueue_to_sqs
     else
+      delivery_method = "deliver_via_#{path_type}".to_sym
+      if !delivery_method || !respond_to?(delivery_method, true)
+        logger.warn("Could not set delivery_method from #{path_type}")
+        return nil
+      end
       send(delivery_method)
     end
+  end
+
+  def skip_and_cancel
+    InstStatsd::Statsd.increment("message.skip.#{path_type}.#{notification_name}",
+                                 short_stat: 'message.skip',
+                                 tags: { path_type: path_type, notification_name: notification_name })
+    self.cancel
   end
 
   # Public: Enqueues a message to the notification_service's sqs queue
@@ -564,15 +716,21 @@ class Message < ActiveRecord::Base
   def enqueue_to_sqs
     targets = notification_targets
     if targets.empty?
+      # Log no_targets_specified error to DataDog
+      InstStatsd::Statsd.increment("message.no_targets_specified",
+                                   short_stat: 'message.no_targets_specified',
+                                   tags: {path_type: path_type})
+
       self.transmission_errors = "No notification targets specified"
       self.set_transmission_error
-    else
+  else
       targets.each do |target|
         Services::NotificationService.process(
-          global_id,
+          notification_service_id,
           notification_message,
           path_type,
-          target
+          target,
+          self.notification&.priority?
         )
       end
       complete_dispatch
@@ -605,7 +763,7 @@ class Message < ActiveRecord::Base
       truncated_body = HtmlTextHelper.strip_and_truncate(body, max_length: message_length)
       "#{truncated_body} #{url}"
     else
-      if to =~ /^\+[0-9]+$/
+      if to =~ /^\+[0-9]+$/ || path_type == 'slack'
         body
       else
         Mailer.create_message(self).to_s
@@ -619,13 +777,19 @@ class Message < ActiveRecord::Base
   def notification_targets
     case path_type
     when "push"
-      self.user.notification_endpoints.map(&:arn)
+      self.user.notification_endpoints.pluck(:arn)
     when "twitter"
       twitter_service = user.user_services.where(service: 'twitter').first
       [
         "access_token"=> twitter_service.token,
         "access_token_secret"=> twitter_service.secret,
         "user_id"=> twitter_service.service_user_id
+      ]
+    when 'slack'
+      [
+        'recipient'=> to,
+        'access_token'=> Canvas::Security.decrypt_password(context_root_account.settings[:encrypted_slack_key],
+                                                           context_root_account.settings[:encrypted_slack_key_salt], 'instructure_slack_encrypted_key')
       ]
     else
       [to]
@@ -657,6 +821,10 @@ class Message < ActiveRecord::Base
   #
   # Returns an account.
   def context_root_account
+    if context.is_a?(AccountNotification)
+      return context.account.root_account
+    end
+
     unbounded_loop_paranoia_counter = 10
     current_context                 = context
 
@@ -685,6 +853,18 @@ class Message < ActiveRecord::Base
       end
 
       current_context
+    end
+  end
+
+  def notification_service_id
+    "#{self.global_id}+#{self.created_at.to_i}"
+  end
+
+  def self.parse_notification_service_id(service_id)
+    if service_id.to_s.include?("+")
+      service_id.split("+")
+    else
+      [service_id, nil]
     end
   end
 
@@ -911,7 +1091,11 @@ class Message < ActiveRecord::Base
   end
 
   def name_helper
-    @name_helper ||= Messages::NameHelper.new(context, notification_name)
+    @name_helper ||= Messages::NameHelper.new(
+      asset: context,
+      message_recipient: self.user,
+      notification_name: notification_name
+    )
   end
 
   def apply_course_nickname_to_asset(asset, user)

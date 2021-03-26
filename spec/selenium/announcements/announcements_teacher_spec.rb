@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -17,7 +19,7 @@
 
 require_relative '../common'
 require_relative '../helpers/announcements_common'
-require_relative './announcement_new_edit_page'
+require_relative './pages/announcement_new_edit_page'
 
 describe "announcements" do
   include_context "in-process server selenium tests"
@@ -132,7 +134,7 @@ describe "announcements" do
       it "should add an attachment to a graded topic", priority: "1", test_id: 220367 do
         what_to_create == DiscussionTopic ? @course.discussion_topics.create!(:title => 'graded attachment topic', :user => @user) : announcement_model(:title => 'graded attachment topic', :user => @user)
         if what_to_create == DiscussionTopic
-          what_to_create.last.update_attributes(:assignment => @course.assignments.create!(:name => 'graded topic assignment'))
+          what_to_create.last.update(:assignment => @course.assignments.create!(:name => 'graded topic assignment'))
         end
         get url
         expect_new_page_load { f('.ic-announcement-row h3').click }
@@ -162,10 +164,12 @@ describe "announcements" do
       _, path = get_file('testfile1.txt')
       f('#discussion_attachment_uploaded_data').send_keys(path)
       expect_new_page_load { submit_form('.form-actions') }
-      expect(Announcement.last.title).to eq("First Announcement")
+      ann = Announcement.last
+      expect(ann.title).to eq("First Announcement")
       # the delayed post at should be far enough in the future to make this
       # not flaky
-      expect(Announcement.last.delayed_post_at > Time.zone.now).to eq true
+      expect(ann.delayed_post_at > Time.zone.now).to eq true
+      expect(ann.attachment).to be_locked
     end
 
     it "displayed delayed post note on page of delayed announcement" do
@@ -236,6 +240,31 @@ describe "announcements" do
       # you have not responded
       get "/courses/#{@course.id}/discussion_topics/#{@announcement.id}"
       expect(ff('.discussion_entry .message')[1]).to include_text(student_entry)
+    end
+
+    context "in a homeroom course" do
+      let(:canvas_for_elem_flag) {@course.root_account.feature_enabled?(:canvas_for_elementary)}
+      let(:is_homeroom) {@course.homeroom_course}
+
+      before :each do
+        @course.root_account.enable_feature!(:canvas_for_elementary)
+        @course.homeroom_course = true
+        @course.save!
+      end
+
+      after :each do
+        @course.root_account.disable_feature!(:canvas_for_elementary) unless canvas_for_elem_flag
+        @course.homeroom_course = is_homeroom
+        @course.save!
+      end
+
+      it "removes the Reply section" do
+        create_announcement
+        get "/courses/#{@course.id}/discussion_topics/#{@announcement.id}"
+
+        expect(f('#discussion_topic')).to contain_css('.entry-content.no-reply')
+        expect(f('body')).not_to contain_css('.discussion-entry-reply-area')
+      end
     end
   end
 end

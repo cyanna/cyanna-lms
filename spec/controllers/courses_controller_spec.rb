@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -16,10 +18,22 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
+require 'sharding_spec_helper'
 
 describe CoursesController do
   describe "GET 'index'" do
+    before(:each) do
+      controller.instance_variable_set(:@domain_root_account, Account.default)
+    end
+
+    def get_index(user=nil)
+      user_session(user) if user
+      user ||= @user
+      controller.instance_variable_set(:@current_user, user)
+      controller.load_enrollments_for_index
+      get 'index'
+    end
+
     it "should force login" do
       course_with_student(:active_all => true)
       get 'index'
@@ -28,7 +42,7 @@ describe CoursesController do
 
     it "should assign variables" do
       course_with_student_logged_in(:active_all => true)
-      get 'index'
+      get_index
       expect(response).to be_successful
       expect(assigns[:current_enrollments]).not_to be_nil
       expect(assigns[:current_enrollments]).not_to be_empty
@@ -45,7 +59,7 @@ describe CoursesController do
       @course.save!
       @course.offer!
       @course.enroll_student(@user)
-      get 'index'
+      get_index
       expect(response).to be_successful
       assigns[:future_enrollments].each do |e|
         expect(assigns[:current_enrollments]).not_to include e
@@ -57,7 +71,7 @@ describe CoursesController do
         # enrollments with multiple sections of the same type should be de-duped
         course_factory(active_all: true)
         user_factory(active_all: true)
-        sec1 = @course.course_sections.create!(:name => "section1")
+        sec1 = @course.course_sections.create!(:name => "section1", :end_at => 1.week.ago)
         sec2 = @course.course_sections.create!(:name => "section2")
         ens = []
         ens << @course.enroll_student(@user, :section => sec1, :allow_multiple_enrollments => true)
@@ -68,14 +82,14 @@ describe CoursesController do
         ens[1].conclude # the current enrollment should take precedence over the concluded one
 
         user_session(@user)
-        get 'index'
+        get_index
         expect(response).to be_successful
         current_ens = assigns[:current_enrollments]
         expect(current_ens.count).to eql(2)
 
         student_e = current_ens.detect(&:student?)
         teacher_e = current_ens.detect(&:teacher?)
-        expect(student_e.course_section).to be_nil
+        expect(student_e.course_section).to eq sec2 # pick the "current" one
         expect(teacher_e.course_section).to eq sec2
 
         expect(assigns[:past_enrollments]).to eql([])
@@ -90,7 +104,7 @@ describe CoursesController do
         enrollment1.course.complete!
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to eql([enrollment1])
         expect(assigns[:current_enrollments]).to eql([])
@@ -106,7 +120,7 @@ describe CoursesController do
         completed_enrollment.update_attribute(:workflow_state, 'completed')
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to eq [completed_enrollment, rejected_enrollment]
         expect(assigns[:current_enrollments]).to eq [active_enrollment]
@@ -121,11 +135,11 @@ describe CoursesController do
         inactive_enroll = @course.enroll_student(@student, :section => section2, :allow_multiple_enrollments => true)
         inactive_enroll.deactivate
 
-        @course.update_attributes(:start_at => 2.days.ago, :conclude_at => 1.day.ago, :restrict_enrollments_to_course_dates => true)
+        @course.update(:start_at => 2.days.ago, :conclude_at => 1.day.ago, :restrict_enrollments_to_course_dates => true)
 
         user_session(@student)
 
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to eq [old_enroll]
       end
@@ -186,7 +200,7 @@ describe CoursesController do
         enrollment7 = course_with_student course: course7, user: @student, active_all: true
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to match_array([enrollment7, enrollment5, enrollment3, enrollment2, enrollment1])
         expect(assigns[:current_enrollments]).to eq [enrollment4]
@@ -198,21 +212,41 @@ describe CoursesController do
 
         # section date in past
         course1 = Account.default.courses.create! start_at: 2.months.ago, conclude_at: 1.month.from_now
-        course1.default_section.update_attributes(:end_at => 1.month.ago)
+        course1.default_section.update(:end_at => 1.month.ago)
         course1.offer!
         enrollment1 = course_with_student course: course1, user: @student, active_all: true
 
         # by section date, in future
         course2 = Account.default.courses.create! start_at: 2.months.ago, conclude_at: 1.month.ago
-        course2.default_section.update_attributes(:end_at => 1.month.from_now)
+        course2.default_section.update(:end_at => 1.month.from_now)
         course2.offer!
         enrollment2 = course_with_student course: course2, user: @student, active_all: true
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to eq [enrollment1]
         expect(assigns[:current_enrollments]).to eq [enrollment2]
+        expect(assigns[:future_enrollments]).to be_empty
+      end
+
+      it "should do even more terrible date logic based on sections" do
+        @student = user_factory
+
+        # both section dates in past
+        course1 = Account.default.courses.create! start_at: 2.months.ago, conclude_at: 1.month.from_now
+        course1.default_section.update(:end_at => 1.month.ago)
+        section2 = course1.course_sections.create!(:end_at => 1.week.ago)
+        course1.offer!
+        enrollment1 = course_with_student course: course1, user: @student, active_all: true
+        enrollment2 = course_with_student course: course1, section: section2, user: @student, active_all: true, allow_multiple_enrollments: true
+
+        user_session(@student)
+        get_index
+        expect(response).to be_successful
+        expect(assigns[:past_enrollments].count).to eq 1
+        expect(assigns[:past_enrollments].first.course).to eq course1
+        expect(assigns[:current_enrollments]).to be_empty
         expect(assigns[:future_enrollments]).to be_empty
       end
 
@@ -223,7 +257,7 @@ describe CoursesController do
         enrollment.deactivate
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:future_enrollments]).to be_empty
       end
@@ -242,7 +276,7 @@ describe CoursesController do
         expect(enrollment).to_not be_invited # state_based_on_date
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:future_enrollments]).to be_empty
@@ -265,24 +299,21 @@ describe CoursesController do
 
         course1.enrollment_term.update_attribute(:end_at, 1.month.ago)
 
-        user_session(@student)
-        get 'index'
+        get_index(@student)
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:current_enrollments]).to be_empty
         expect(assigns[:future_enrollments]).to be_empty
 
         observer = user_with_pseudonym(active_all: true)
-        o = @student.as_student_observation_links.build; o.observer = observer; o.save!
-        user_session(observer)
-        get 'index'
+        add_linked_observer(@student, observer)
+        get_index(observer)
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:current_enrollments]).to be_empty
         expect(assigns[:future_enrollments]).to be_empty
 
-        user_session(teacher)
-        get 'index'
+        get_index(teacher)
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to eq [teacher_enrollment]
         expect(assigns[:current_enrollments]).to be_empty
@@ -303,11 +334,37 @@ describe CoursesController do
         course1.enrollment_term.update_attribute(:end_at, 1.month.from_now)
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to eq [enrollment]
         expect(assigns[:current_enrollments]).to be_empty
         expect(assigns[:future_enrollments]).to be_empty
+      end
+
+      describe "unpublished_courses FF" do
+        it "should list unpublished courses after published with the unpublished_courses FF enabled" do
+          @student = user_factory
+
+          # past unpublished course
+          course1 = Account.default.courses.create! start_at: 2.months.ago, conclude_at: 1.month.ago, name: 'A'
+          course1.offer!
+          enrollment1 = course_with_student course: course1, user: @student
+          enrollment1.accept!
+          course1.update! workflow_state: 'created'
+
+          # past published course
+          course2 = Account.default.courses.create! start_at: 2.months.ago, conclude_at: 1.month.ago, name: 'Z'
+          course2.offer!
+          course_with_student course: course2, user: @student, active_all: true
+
+          user_session(@student)
+          get_index
+          expect(assigns[:past_enrollments].map(&:course_id)).to eq [course1.id, course2.id] # A, then Z
+
+          Account.default.enable_feature!(:unpublished_courses)
+          get_index
+          expect(assigns[:past_enrollments].map(&:course_id)).to eq [course2.id, course1.id] # Z, then A
+        end
       end
     end
 
@@ -330,7 +387,7 @@ describe CoursesController do
         enrollment3 = student_in_course user: @student, course: course3, active_all: true
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:current_enrollments]).to eq [enrollment1, enrollment2, enrollment3]
@@ -350,7 +407,7 @@ describe CoursesController do
         enrollment2.course.save!
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:current_enrollments]).to eq [enrollment1, enrollment2]
@@ -366,7 +423,7 @@ describe CoursesController do
         enrollment2 = course_with_student user: @student, course_name: 'A', active_all: true
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:current_enrollments]).to eq [enrollment1, enrollment2]
@@ -379,11 +436,34 @@ describe CoursesController do
         enrollment.invite!
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:current_enrollments]).to eq [enrollment]
         expect(assigns[:future_enrollments]).to be_empty
+      end
+
+      describe "unpublished_courses FF" do
+        it "should list unpublished courses after published with the unpublished_courses FF enabled" do
+          # unpublished course
+          course1 = Account.default.courses.create! name: 'A'
+          enrollment1 = course_with_student user: @student, course: course1
+          enrollment1.invite!
+          expect(course1).to be_unpublished
+
+          # published course
+          course2 = Account.default.courses.create! name: 'Z'
+          course2.offer!
+          course_with_student course: course2, user: @student, active_all: true
+
+          user_session(@student)
+          get_index
+          expect(assigns[:current_enrollments].map(&:course_id)).to eq [course1.id, course2.id]
+
+          Account.default.enable_feature!(:unpublished_courses)
+          get_index
+          expect(assigns[:current_enrollments].map(&:course_id)).to eq [course2.id, course1.id]
+        end
       end
     end
 
@@ -400,16 +480,16 @@ describe CoursesController do
         enrollment2 = course_with_student user: @student, course: course2
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:current_enrollments]).to be_empty
         expect(assigns[:future_enrollments].map(&:course_id)).to eq [course1.id, course2.id]
 
         observer = user_with_pseudonym(active_all: true)
-        o = @student.as_student_observation_links.build; o.observer = observer; o.save!
+        add_linked_observer(@student, observer)
         user_session(observer)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:current_enrollments]).to be_empty
@@ -421,7 +501,7 @@ describe CoursesController do
         course1.offer!
         student_in_course course: course1, active_all: true
         user_session(@student)
-        get 'index'
+        get_index
         expect(assigns[:future_enrollments].map(&:course_id)).to eq [course1.id]
       end
 
@@ -434,16 +514,16 @@ describe CoursesController do
         expect(course1.restrict_student_future_view?).to be_truthy # should inherit
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:current_enrollments]).to be_empty
         expect(assigns[:future_enrollments]).to eq [enrollment1]
 
         observer = user_with_pseudonym(active_all: true)
-        o = @student.as_student_observation_links.build; o.observer = observer; o.save!
+        add_linked_observer(@student, observer)
         user_session(observer)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:current_enrollments]).to be_empty
@@ -452,7 +532,7 @@ describe CoursesController do
         teacher = user_with_pseudonym(:active_all => true)
         teacher_enrollment = course_with_teacher course: course1, :user => teacher
         user_session(teacher)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:past_enrollments]).to be_empty
         expect(assigns[:current_enrollments]).to be_empty
@@ -468,7 +548,7 @@ describe CoursesController do
         expect(enrollment1.restrict_future_listing?).to be_truthy
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:future_enrollments]).to eq []
       end
@@ -485,50 +565,93 @@ describe CoursesController do
         expect(enrollment1.restrict_future_listing?).to be_truthy
 
         user_session(@student)
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:future_enrollments]).to eq []
 
         course1.offer!
-        get 'index'
+        get_index
         expect(response).to be_successful
         expect(assigns[:future_enrollments]).to eq [enrollment1] # show it because it's accessible now
+      end
+
+      describe "unpublished_courses FF" do
+        it "should list unpublished courses after published with the unpublished_courses FF enabled" do
+          # unpublished course
+          course1 = Account.default.courses.create! start_at: 1.month.from_now, restrict_enrollments_to_course_dates: true, name: 'A'
+          expect(course1).to be_unpublished
+          course_with_student user: @student, course: course1
+
+          # published course
+          course2 = Account.default.courses.create! start_at: 1.month.from_now, restrict_enrollments_to_course_dates: true, name: 'Z'
+          course2.offer!
+          course_with_student user: @student, course: course2
+
+          user_session(@student)
+          get_index
+          expect(assigns[:future_enrollments].map(&:course_id)).to eq [course1.id, course2.id] # A, then Z
+
+          Account.default.enable_feature!(:unpublished_courses)
+          get_index
+          expect(assigns[:future_enrollments].map(&:course_id)).to eq [course2.id, course1.id] # Z, then A
+        end
       end
     end
 
     describe "per-assignment permissions" do
-      let(:js_permissions) { assigns[:js_env][:PERMISSIONS] }
+      let(:assignment_permissions) { assigns[:js_env][:PERMISSIONS][:by_assignment_id] }
 
       before(:each) do
-        course_with_teacher_logged_in(active_all: true)
-
-        @course.update!(default_view: 'assignments')
+        @course = Course.create!(default_view: "assignments")
+        @teacher = course_with_user("TeacherEnrollment", course: @course, active_all: true).user
+        @ta = course_with_user("TaEnrollment", course: @course, active_all: true).user
         @course.enable_feature!(:moderated_grading)
 
-        @editable_assignment = @course.assignments.create!(
+        @assignment = @course.assignments.create!(
           moderated_grading: true,
           grader_count: 2,
           final_grader: @teacher
         )
 
         ta_in_course(active_all: true)
-        @uneditable_assignment = @course.assignments.create!(
-          moderated_grading: true,
-          grader_count: 2,
-          final_grader: @ta
-        )
       end
 
-      let(:assignment_permissions) { assigns[:js_env][:PERMISSIONS][:by_assignment_id] }
-
-      it "sets the 'update' attribute for an editable assignment to true" do
+      it "sets the 'update' attribute to true when user is the final grader" do
+        user_session(@teacher)
         get 'show', params: {id: @course.id}
-        expect(assignment_permissions[@editable_assignment.id][:update]).to eq(true)
+        expect(assignment_permissions[@assignment.id][:update]).to eq(true)
       end
 
-      it "sets the 'update' attribute for an uneditable assignment to false" do
+      it "sets the 'update' attribute to true when user has the Select Final Grade permission" do
+        user_session(@ta)
         get 'show', params: {id: @course.id}
-        expect(assignment_permissions[@uneditable_assignment.id][:update]).to eq(false)
+        expect(assignment_permissions[@assignment.id][:update]).to eq(true)
+      end
+
+      it "sets the 'update' attribute to false when user does not have the Select Final Grade permission" do
+        @course.account.role_overrides.create!(permission: :select_final_grade, enabled: false, role: ta_role)
+        user_session(@ta)
+        get 'show', params: {id: @course.id}
+        expect(assignment_permissions[@assignment.id][:update]).to eq(false)
+      end
+    end
+
+    describe 'Course notification settings' do
+      before(:each) do
+        @course = Course.create!(default_view: "assignments")
+        @teacher = course_with_user("TeacherEnrollment", course: @course, active_all: true).user
+      end
+
+      it 'shows the course notification settings page' do
+        user_session(@teacher)
+        get 'show', params: {id: @course.id, view: 'notifications'}
+        expect(response).to be_successful
+
+        contains_js_bundle = false
+        assigns['js_bundles'].each do |js_bundle|
+          contains_js_bundle = js_bundle.include? :course_notification_settings_show if js_bundle.include? :course_notification_settings_show
+        end
+        expect(contains_js_bundle).to be true
       end
     end
   end
@@ -541,10 +664,76 @@ describe CoursesController do
     end
   end
 
+  describe 'observer_pairing_codes' do
+    before :once do
+      course_with_teacher(active_all: true)
+      student_in_course(course: @course, active_all: true)
+      @teacher.name = "teacher"
+      @teacher.save!
+    end
+
+    it "returns unauthorized if self registration is off" do
+      user_session(@teacher)
+      @course.root_account.root_account.role_overrides.create!(role: teacher_role, enabled: true, permission: :generate_observer_pairing_code)
+      ObserverPairingCode.create(user: @student, expires_at: 1.day.from_now, code: SecureRandom.hex(3))
+      get :observer_pairing_codes_csv, params: {course_id: @course.id}
+      expect(response).to be_unauthorized
+    end
+
+    it "returns unauthorized if role does not have permission" do
+      user_session(@teacher)
+      @course.root_account.root_account.role_overrides.create!(role: teacher_role, enabled: false, permission: :generate_observer_pairing_code)
+      @teacher.account.canvas_authentication_provider.update_attribute(:self_registration, true)
+      ObserverPairingCode.create(user: @student, expires_at: 1.day.from_now, code: SecureRandom.hex(3))
+      get :observer_pairing_codes_csv, params: {course_id: @course.id}
+      expect(response).to be_unauthorized
+    end
+
+    it "generates an observer pairing codes csv" do
+      user_session(@teacher)
+      @course.root_account.root_account.role_overrides.create!(role: teacher_role, enabled: true, permission: :generate_observer_pairing_code)
+      @teacher.account.canvas_authentication_provider.update_attribute(:self_registration, true)
+      get :observer_pairing_codes_csv, params: {course_id: @course.id}
+      expect(response).to be_successful
+      expect(response.header['Content-Type']).to eql("text/csv")
+      expect(response.body.split(",").last.strip).to eql(ObserverPairingCode.last.expires_at.to_s)
+      expect(response.body.split(",")[-2]).to include(ObserverPairingCode.last.code)
+    end
+
+    it "generates observer pairing codes only for students" do
+      user_session(@teacher)
+      @course.root_account.root_account.role_overrides.create!(role: teacher_role, enabled: true, permission: :generate_observer_pairing_code)
+      @teacher.account.canvas_authentication_provider.update_attribute(:self_registration, true)
+      get :observer_pairing_codes_csv, params: {course_id: @course.id}
+      expect(response).to be_successful
+      expect(response.header['Content-Type']).to eql("text/csv")
+      expect(response.body).to include(@student.name)
+      expect(response.body.include?(@teacher.name)).to be_falsey
+      expect(response.body.split(",").last.strip).to eql(ObserverPairingCode.last.expires_at.to_s)
+      expect(response.body.split(",")[-2]).to include(ObserverPairingCode.last.code)
+    end
+  end
+
   describe "GET 'settings'" do
     before :once do
       course_with_teacher(active_all: true)
       student_in_course(active_all: true)
+    end
+
+    it 'sets the external tools create url' do
+      user_session(@teacher)
+      get 'settings', params: {:course_id => @course.id}
+      expect(controller.js_env[:EXTERNAL_TOOLS_CREATE_URL]).to eq(
+        "http://test.host/courses/#{@course.id}/external_tools"
+      )
+    end
+
+    it 'sets the tool configuration show url' do
+      user_session(@teacher)
+      get 'settings', params: {:course_id => @course.id}
+      expect(controller.js_env[:TOOL_CONFIGURATION_SHOW_URL]).to eq(
+        "http://test.host/api/lti/courses/#{@course.id}/developer_keys/:developer_key_id/tool_configuration"
+      )
     end
 
     it "should set tool creation permissions true for roles that are granted rights" do
@@ -614,9 +803,7 @@ describe CoursesController do
 
     it "should assign active course_settings_sub_navigation external tools" do
       user_session(@teacher)
-      @teacher.enable_feature!(:lor_for_user)
       shared_settings = { consumer_key: 'test', shared_secret: 'secret', url: 'http://example.com/lti' }
-      other_tool = @course.context_external_tools.create(shared_settings.merge(name: 'other', course_navigation: {enabled: true}))
       inactive_tool = @course.context_external_tools.create(shared_settings.merge(name: 'inactive', course_settings_sub_navigation: {enabled: true}))
       active_tool = @course.context_external_tools.create(shared_settings.merge(name: 'active', course_settings_sub_navigation: {enabled: true}))
       inactive_tool.workflow_state = 'deleted'
@@ -719,9 +906,9 @@ describe CoursesController do
     it "should accept an enrollment for a restricted by dates course" do
       course_with_student_logged_in(:active_all => true)
 
-      @course.update_attributes(:restrict_enrollments_to_course_dates => true,
+      @course.update(:restrict_enrollments_to_course_dates => true,
                                 :start_at => Time.now + 2.weeks)
-      @enrollment.update_attributes(:workflow_state => 'invited', last_activity_at: nil)
+      @enrollment.update(:workflow_state => 'invited', last_activity_at: nil)
 
       post 'enrollment_invitation', params: {:course_id => @course.id, :accept => '1',
         :invitation => @enrollment.uuid}
@@ -745,6 +932,7 @@ describe CoursesController do
     end
 
     it "should not find deleted courses" do
+      skip "flaky, unskip in LS-1909"
       user_session(@teacher)
       @course.destroy
       assert_page_not_found do
@@ -804,6 +992,19 @@ describe CoursesController do
 
       get 'show', params: {:id => @c2.id}
       assert_unauthorized
+    end
+
+    it 'includes analytics 2 link if installed' do
+      tool = analytics_2_tool_factory
+      Account.default.enable_feature!(:analytics_2)
+
+      get 'show', params: {id: @course.id}
+      expect(controller.course_custom_links).to include({
+        text: "Analytics 2",
+        url: "http://test.host/courses/#{@course.id}/external_tools/#{tool.id}?launch_type=course_navigation",
+        icon_class: "icon-analytics",
+        tool_id: ContextExternalTool::ANALYTICS_2
+      })
     end
 
     def check_course_show(should_show)
@@ -881,14 +1082,14 @@ describe CoursesController do
 
     context "show feedback for the current course only on course front page" do
       before(:once) do
-        course_with_student(:active_all => true)
-        @me = @user
+        course_with_teacher(active_all: true)
         @course1 = @course
-        course_with_teacher(:course => @course1)
+        student_in_course(active_all: true, course: @course1)
+        @me = @user
 
-        course_with_student(:active_all => true, :user => @student)
+        course_with_teacher(active_all: true, user: @teacher)
         @course2 = @course
-        course_with_teacher(:course => @course2, :user => @teacher)
+        student_in_course(active_all: true, course: @course2, user: @me)
 
         @a1 = @course1.assignments.new(:title => "some assignment course 1")
         @a1.workflow_state = "published"
@@ -1201,6 +1402,14 @@ describe CoursesController do
       end
     end
 
+    it "should set ENV.COURSE_ID for assignments view" do
+      course_with_teacher_logged_in(:active_all => true)
+      @course.default_view = "assignments"
+      @course.save!
+      get 'show', params: {:id => @course.id}
+      expect(assigns(:js_env)[:COURSE_ID]).to eq @course.id.to_s
+    end
+
     it "should redirect html to settings page when user can :read_as_admin, but not :read" do
       # an account user on the site admin will always have :read_as_admin
       # permission to any course, but will not have :read permission unless
@@ -1281,7 +1490,6 @@ describe CoursesController do
 
     context "course_home_sub_navigation" do
       before :once do
-        @course.root_account.enable_feature!(:lor_for_account)
         @tool = @course.context_external_tools.create(consumer_key: 'test', shared_secret: 'secret', url: 'http://example.com/lti',
           name: 'tool', course_home_sub_navigation: {enabled: true, visibility: 'admins'})
       end
@@ -1458,6 +1666,7 @@ describe CoursesController do
       @account = Account.default
       role = custom_account_role 'lamer', :account => @account
       @account.role_overrides.create! :permission => 'manage_courses', :enabled => true, :role => role
+      @visperm = @account.role_overrides.create! :permission => 'manage_course_visibility', :enabled => true, :role => role
       user_factory
       @account.account_users.create!(user: @user, role: role)
       user_session @user
@@ -1477,6 +1686,45 @@ describe CoursesController do
 
       post 'create', params: { :account_id => @account.id, :course =>
           { :name => course.name, :lock_all_announcements => true } }
+    end
+
+    it "should set the visibility settings when we have permission" do
+      post 'create', params: {
+        :account_id => @account.id, :course => {
+          name: 'new course',
+          is_public: true,
+          public_syllabus: true,
+          is_public_to_auth_users: true,
+          public_syllabus_to_auth: true
+        }
+      }, format: :json
+
+      json = JSON.parse response.body
+      expect(json['is_public']).to be true
+      expect(json['public_syllabus']).to be true
+      expect(json['is_public_to_auth_users']).to be true
+      expect(json['public_syllabus_to_auth']).to be true
+    end
+
+    it "should NOT allow visibility to be set when we don't have permission" do
+      @visperm.enabled = false
+      @visperm.save
+
+      post 'create', params: {
+        :account_id => @account.id, :course => {
+          name: 'new course',
+          is_public: true,
+          public_syllabus: true,
+          is_public_to_auth_users: true,
+          public_syllabus_to_auth: true
+        }
+      }, format: :json
+
+      json = JSON.parse response.body
+      expect(json['is_public']).to be false
+      expect(json['public_syllabus']).to be false
+      expect(json['is_public_to_auth_users']).to be false
+      expect(json['public_syllabus_to_auth']).to be false
     end
   end
 
@@ -1520,7 +1768,22 @@ describe CoursesController do
     end
 
     it "should log published event on update" do
+      @course.claim!
       expect(Auditors::Course).to receive(:record_published).once
+      user_session(@teacher)
+      put 'update', params: {:id => @course.id, :offer => true}
+    end
+
+    it "should not publish when offer is false" do
+      @course.claim!
+      expect(Auditors::Course).to receive(:record_published).never
+      user_session(@teacher)
+      put 'update', params: {:id => @course.id, :offer => "false"}
+      expect(@course.reload).to be_claimed
+    end
+
+    it "should not log published event if course was already published" do
+      expect(Auditors::Course).to receive(:record_published).never
       user_session(@teacher)
       put 'update', params: {:id => @course.id, :offer => true}
     end
@@ -1532,6 +1795,7 @@ describe CoursesController do
     end
 
     it 'should allow unpublishing of the course' do
+      skip "flaky, unskip in LS-1909"
       user_session(@teacher)
       put 'update', params: {:id => @course.id, :course => {:event => 'claim'}}
       @course.reload
@@ -1560,6 +1824,64 @@ describe CoursesController do
       put 'update', params: {:id => @course.id, :course => { :event => 'claim' }}
       @course.reload
       expect(@course.workflow_state).to eq 'claimed'
+    end
+
+    it "concludes a course" do
+      expect(Auditors::Course).to receive(:record_concluded).once
+      user_session(@teacher)
+      put 'update', params: {:id => @course.id, :course => {:event => "conclude"}, :format => :json}
+      json = JSON.parse response.body
+      expect(json['course']['workflow_state']).to eq 'completed'
+      @course.reload
+      expect(@course.workflow_state).to eq 'completed'
+    end
+
+    it "publishes a course" do
+      @course.claim!
+      expect(Auditors::Course).to receive(:record_published).once
+      user_session(@teacher)
+      put 'update', params: {:id => @course.id, :course => {:event => 'offer'}, :format => :json}
+      json = JSON.parse response.body
+      expect(json['course']['workflow_state']).to eq 'available'
+      @course.reload
+      expect(@course.workflow_state).to eq 'available'
+    end
+
+    it "deletes a course" do
+      user_session(@teacher)
+      expect(Auditors::Course).to receive(:record_deleted).once
+      put 'update', params: {:id => @course.id, :course => {:event => 'delete'}, :format => :json}
+      json = JSON.parse response.body
+      expect(json['course']['workflow_state']).to eq 'deleted'
+      @course.reload
+      expect(@course.workflow_state).to eq 'deleted'
+    end
+
+    it "doesn't allow a teacher to undelete a course" do
+      @course.destroy
+      expect(Auditors::Course).to receive(:record_restored).never
+      user_session(@teacher)
+      put 'update', params: {:id => @course.id, :course => {:event => 'undelete'}, :format => :json}
+      expect(response.status).to eq 401
+    end
+
+    it "undeletes a course" do
+      @course.destroy
+      expect(Auditors::Course).to receive(:record_restored).once
+      user_session(account_admin_user)
+      put 'update', params: {:id => @course.id, :course => {:event => 'undelete'}, :format => :json}
+      json = JSON.parse response.body
+      expect(json['course']['workflow_state']).to eq 'claimed'
+      @course.reload
+      expect(@course.workflow_state).to eq 'claimed'
+    end
+
+    it "returns an error if a bad event is given" do
+      user_session(@teacher)
+      put 'update', params: {:id => @course.id, :course => {:event => 'boogie'}, :format => :json}
+      expect(response.status).to eq 400
+      json = JSON.parse response.body
+      expect(json['errors'].keys).to include 'workflow_state'
     end
 
     it "should lock active course announcements" do
@@ -1607,6 +1929,14 @@ describe CoursesController do
       @course.save!
       put 'update', params: {:id => @course.id, :course => { :lock_all_announcements => 0 }}
       expect(assigns[:course].lock_all_announcements).to be_falsey
+    end
+
+    it "should update its usage_rights_required setting" do
+      user_session(@teacher)
+      @course.usage_rights_required = true
+      @course.save!
+      put 'update', params: {:id => @course.id, :course => { :usage_rights_required => 0 }}
+      expect(assigns[:course].usage_rights_required).to be_falsey
     end
 
     it "should let sub-account admins move courses to other accounts within their sub-account" do
@@ -1786,6 +2116,7 @@ describe CoursesController do
       before :once do
         account_admin_user
         course_factory
+        ta_in_course
       end
 
       before :each do
@@ -1793,7 +2124,6 @@ describe CoursesController do
       end
 
       it 'should require :manage_master_courses permission' do
-        ta_in_course
         user_session @ta
         put 'update', params: {:id => @course.id, :course => { :blueprint => '1' }}, :format => 'json'
         expect(response).to be_unauthorized
@@ -1828,6 +2158,35 @@ describe CoursesController do
         expect(response).to be_successful
         template = MasterCourses::MasterTemplate.full_template_for(@course)
         expect(template.default_restrictions).to eq({:content => false, :due_dates => true})
+      end
+
+      describe "changing restrictions" do
+        before :once do
+          @template = MasterCourses::MasterTemplate.set_as_master_course(@course)
+          @template.update_attribute(:default_restrictions, {:content => true})
+        end
+
+        it "allows an admin to change restrictions" do
+          put 'update', params: {:id => @course.id, :course => { :blueprint => '1',
+            :blueprint_restrictions => {'content' => '0', 'due_dates' => '1'}}}, :format => 'json'
+          expect(response).to be_successful
+          template = MasterCourses::MasterTemplate.full_template_for(@course)
+          expect(template.default_restrictions).to eq({:content => false, :due_dates => true})
+        end
+
+        it "forbids a non-admin from changing restrictions" do
+          user_session @ta
+          put 'update', params: {:id => @course.id, :course => { :blueprint => '1',
+            :blueprint_restrictions => {'content' => '0', 'due_dates' => '1'}}}, :format => 'json'
+          expect(response).to be_unauthorized
+        end
+
+        it "allows a non-admin to perform a no-op request" do
+          user_session @ta
+          put 'update', params: {:id => @course.id, :course => { :blueprint => '1',
+            :blueprint_restrictions => {'content' => '1'}}}, :format => 'json'
+          expect(response).to be_successful
+        end
       end
 
       it "should validate template restrictions" do
@@ -1865,11 +2224,24 @@ describe CoursesController do
         expect(response.body).to include 'Invalid restrictions'
       end
     end
+
+    it "should update pages' permissions even if course default is nil" do
+      user_session(@teacher)
+      wiki_page = @course.wiki_pages.create! :title => 'Wiki page 1', :editing_roles=> 'teachers'
+      new_permissions = 'teachers,students'
+      put 'update', params: {:id => @course.id, :update_default_pages => true, :course => {:default_wiki_editing_roles => new_permissions}}
+      @course.reload
+      wiki_page.reload
+      expect(@course.default_wiki_editing_roles).to eq new_permissions
+      expect(wiki_page.editing_roles).to eq new_permissions
+    end
   end
 
   describe "POST 'unconclude'" do
     it "should unconclude the course" do
-      course_with_teacher_logged_in(:active_all => true)
+      course_factory(:active_all => true)
+      account_admin_user(:active_all => true)
+      user_session(@admin)
       delete 'destroy', params: {:id => @course.id, :event => 'conclude'}
       expect(response).to be_redirect
       expect(@course.reload).to be_completed
@@ -2121,14 +2493,37 @@ describe CoursesController do
       expect(feed.entries.all?{|e| e.authors.present?}).to be_truthy
     end
 
-    it "should not include unpublished assignments or discussions" do
+    it "should not include unpublished assignments or discussions or pages" do
       discussion_topic_model(:context => @course)
       @assignment.unpublish
       @topic.unpublish!
+      @course.wiki_pages.create! :title => 'unpublished', :workflow_state => 'unpublished'
       get 'public_feed', params: {:feed_code => @enrollment.feed_code}, :format => 'atom'
       feed = Atom::Feed.load_feed(response.body) rescue nil
       expect(feed).not_to be_nil
       expect(feed.entries).to be_empty
+    end
+
+    it "respects assignment overrides" do
+      @assignment.update_attribute :only_visible_to_overrides, true
+      @a0 = @assignment
+      graded_discussion_topic(context: @course)
+      @topic.assignment.update_attribute :only_visible_to_overrides, true
+
+      get 'public_feed', params: {:feed_code => @enrollment.feed_code}, :format => 'atom'
+      feed = Atom::Feed.load_feed(response.body) rescue nil
+      expect(feed).not_to be_nil
+      expect(feed.entries.map(&:id).join(" ")).not_to include @a0.asset_string
+      expect(feed.entries.map(&:id).join(" ")).not_to include @topic.asset_string
+
+      assignment_override_model :assignment => @a0, :set => @enrollment.course_section
+      assignment_override_model :assignment => @topic.assignment, :set => @enrollment.course_section
+
+      get 'public_feed', params: {:feed_code => @enrollment.feed_code}, :format => 'atom'
+      feed = Atom::Feed.load_feed(response.body) rescue nil
+      expect(feed).not_to be_nil
+      expect(feed.entries.map(&:id).join(" ")).to include @a0.asset_string
+      expect(feed.entries.map(&:id).join(" ")).to include @topic.asset_string
     end
   end
 
@@ -2370,16 +2765,21 @@ describe CoursesController do
     end
 
     it "removes submissions created by the test student" do
+      allow(Auditors).to receive(:config).and_return({'write_paths' => ['active_record'], 'read_path' => 'active_record'})
       user_session(@teacher)
       post 'student_view', params: {course_id: @course.id}
       test_student = @course.student_view_student
       assignment = @course.assignments.create!(:workflow_state => 'published')
       assignment.grade_student test_student, { :grade => 1, :grader => @teacher }
       expect(test_student.submissions.size).not_to be_zero
+      submission = test_student.submissions.first
+      auditor_rec = submission.auditor_grade_change_records.first
+      expect(auditor_rec).to_not be_nil
       OriginalityReport.create!(attachment: attachment_model, originality_score: '1', submission: test_student.submissions.first)
       delete 'reset_test_student', params: {course_id: @course.id}
       test_student.reload
       expect(test_student.submissions.size).to be_zero
+      expect(Auditors::ActiveRecord::GradeChangeRecord.where(id: auditor_rec.id).count).to be_zero
     end
 
     it "removes provisional grades for by the test student" do
@@ -2415,6 +2815,24 @@ describe CoursesController do
       assignment.reload
 
       expect(assignment.needs_grading_count).to eq original_needs_grading_count - 1
+    end
+
+    it 'removes outcome results for the test student' do
+      user_session(@teacher)
+      outcome_with_rubric(course: @course)
+      rubric_association_model(rubric: @rubric)
+
+      test_student = @course.student_view_student
+      session[:become_user_id] = test_student.id
+      rubric_assessment_model(rubric_association: @rubric_association, user: test_student)
+      expect(test_student.learning_outcome_results.size).not_to be_zero
+      expect(@outcome.assessed?).to be_truthy
+
+      delete 'reset_test_student', params: {course_id: @course.id}
+
+      test_student.reload
+      expect(test_student.learning_outcome_results.size).to be_zero
+      expect(@outcome.assessed?).to be_falsey
     end
   end
 
@@ -2480,6 +2898,294 @@ describe CoursesController do
       json = json_parse(response.body)
       expect(json[0]).to include({ "id" => student1.id, "group_ids" => [group1.id] })
       expect(json[1]).to include({ "id" => student2.id, "group_ids" => [group2.id] })
+    end
+
+    it 'can take student uuids as inputs and output uuids in json' do
+      user_session(teacher)
+      get 'users', params: {
+        course_id: course.id,
+        user_uuids: [student1.uuid],
+        format: 'json',
+        include: ['uuid'],
+        enrollment_role: 'StudentEnrollment'
+      }
+      json = json_parse(response.body)
+      expect(json.count).to eq(1)
+      expect(json[0]).to include({ "id" => student1.id, "uuid" => student1.uuid })
+    end
+
+    it 'can sort users' do
+      student1.update!(name: 'Student B')
+      student2.update!(name: 'Student A')
+
+      user_session(teacher)
+      get 'users', params: {
+        course_id: course.id,
+        format: 'json',
+        enrollment_role: 'StudentEnrollment',
+        sort: 'username'
+      }
+      json = json_parse(response.body)
+      expect(json[0]).to include({ 'id' => student2.id })
+      expect(json[1]).to include({ 'id' => student1.id })
+    end
+  end
+
+  describe '#content_share_users' do
+    before :once do
+      course_with_teacher(name: 'search teacher', :active_all => true)
+      @course.root_account.enable_feature!(:direct_share)
+    end
+
+    it 'requires a search term' do
+      user_session(@teacher)
+      get 'content_share_users', params: {course_id: @course.id}
+      expect(response).to be_bad_request
+    end
+
+    it 'requires the user to have an admin role for the course' do
+      course_with_student_logged_in
+      get 'content_share_users', params: {course_id: @course.id, search_term: 'teacher'}
+      expect(response).to be_unauthorized
+
+      course_with_designer(name: 'course designer', course: @course, :active_all => true)
+      user_session(@designer)
+      get 'content_share_users', params: {course_id: @course.id, search_term: 'teacher'}
+      json = json_parse(response.body)
+      expect(json[0]).to include({'name' => 'search teacher'})
+    end
+
+    it 'requires the feature be enabled' do
+      @course.root_account.disable_feature!(:direct_share)
+      get 'content_share_users', params: {course_id: @course.id, search_term: 'teacher'}
+      expect(response).to be_forbidden
+    end
+
+    it 'should return email, url avatar (if avatars are enabled), and name' do
+      user_session(@teacher)
+      @search_context = @course
+      course_with_teacher(name: 'course teacher')
+      @teacher.account.enable_service(:avatars)
+      get 'content_share_users', params: {course_id: @search_context.id, search_term: 'course'}
+      json = json_parse(response.body)
+      expect(json[0]).to include({'email' => nil, 'name' => 'course teacher', 'avatar_url' => "http://test.host/images/messages/avatar-50.png"})
+    end
+
+    it 'should search by name and email' do
+      user_session(@teacher)
+      @teacher.account.enable_service(:avatars)
+      user_model(name: "course teacher")
+      communication_channel_model(user: @user, path: 'course_teacher@test.edu')
+      course_with_teacher(user: @user, course: @course)
+
+      user_model(name: "course designer")
+      communication_channel_model(user: @user, path: 'course_designer@test.edu')
+      course_with_teacher(user: @user, course: @course)
+
+      get 'content_share_users', params: {course_id: @course.id, search_term: 'course teacher'}
+      json = json_parse(response.body)
+      expect(json[0]).to include({'email' => 'course_teacher@test.edu', 'name' => 'course teacher', 'avatar_url' => "http://test.host/images/messages/avatar-50.png"})
+
+      get 'content_share_users', params: {course_id: @course.id, search_term: 'course_designer@test.edu'}
+      json = json_parse(response.body)
+      expect(json[0]).to include({'email' => 'course_designer@test.edu', 'name' => 'course designer', 'avatar_url' => "http://test.host/images/messages/avatar-50.png"})
+    end
+
+    it 'searches for teachers, TAs, and designers' do
+      user_session(@teacher)
+      @search_context = @course
+      course_with_teacher(name: 'course teacher')
+      course_with_ta(name: 'course ta')
+      course_with_designer(name: 'course designer')
+      course_with_student(name: 'course student')
+      course_with_observer(name: 'course observer')
+      get 'content_share_users', params: {course_id: @search_context.id, search_term: 'course'}
+      json = json_parse(response.body)
+      expect(json.map{|user| user['name']}).to eq(['course designer', 'course ta', 'course teacher'])
+    end
+
+    it 'should not return users with only deleted enrollments or deleted courses' do
+      user_session(@teacher)
+      @search_context = @course
+      course_with_teacher(name: 'course teacher').destroy
+      get 'content_share_users', params: {course_id: @search_context.id, search_term: 'course'}
+      json = json_parse(response.body)
+      expect(json.map{|user| user['name']}).not_to include('course teacher')
+
+      course_with_ta(name: 'course ta')
+      @course.destroy
+      get 'content_share_users', params: {course_id: @search_context.id, search_term: 'course'}
+      json = json_parse(response.body)
+      expect(json.map{|user| user['name']}).not_to include('course ta')
+    end
+
+    it 'search for root and sub-account admins' do
+      user_session(@teacher)
+      @search_context = @course
+      sub_account = account_model(parent_account: @course.root_account)
+      account_admin = user_factory(name: 'account admin')
+      sub_account_admin = user_factory(name: 'sub-account admin')
+      account_admin_user(account: @course.root_account, user: account_admin)
+      account_admin_user(account: sub_account, user: sub_account_admin)
+
+      get 'content_share_users', params: {course_id: @search_context.id, search_term: 'admin'}
+      json = json_parse(response.body)
+      expect(json.map{|user| user['name']}).to eq(['account admin', 'sub-account admin'])
+    end
+
+    it 'should not return users with deleted admin accounts' do
+      user_session(@teacher)
+      sub_account = account_model(parent_account: @course.root_account)
+      account_admin = user_factory(name: 'account admin')
+      sub_account_admin = user_factory(name: 'sub-account admin')
+      account_admin_user(account: @course.root_account, user: account_admin).destroy
+      account_admin_user(account: sub_account, user: sub_account_admin)
+      sub_account.destroy
+
+      get 'content_share_users', params: {course_id: @course.id, search_term: 'admin'}
+      json = json_parse(response.body)
+      expect(json.map{|user| user['name']}).not_to include('account admin', 'sub-account admin')
+    end
+
+    it 'should return the searching user' do
+      user_session(@teacher)
+      @search_context = @course
+      course_with_teacher(name: 'course teacher')
+      get 'content_share_users', params: {course_id: @search_context.id, search_term: 'teacher'}
+      json = json_parse(response.body)
+      expect(json.map{|user| user['name']}).to match_array(['course teacher', 'search teacher'])
+    end
+
+    it 'should not return admin roles that do not have the "manage_content" permission' do
+      user_session(@teacher)
+      account_admin = user_factory(name: 'less privileged account admin')
+      role = custom_account_role('manage_content', account: @course.root_account)
+      account_admin_user(account: @course.root_account, user: account_admin, role: role)
+
+      get 'content_share_users', params: {course_id: @course.id, search_term: 'less privileged'}
+      json = json_parse(response.body)
+      expect(json.map{|user| user['name']}).not_to include('less privileged account admin')
+
+      role.role_overrides.create!(enabled: true, permission: 'manage_content', context: @course.root_account)
+      get 'content_share_users', params: {course_id: @course.id, search_term: 'less privileged'}
+      json = json_parse(response.body)
+      expect(json.map{|user| user['name']}).to include('less privileged account admin')
+    end
+
+    it 'should not return users from other root accounts' do
+      user_session(@teacher)
+      a1_course = @course
+      a2 = Account.create!(name: 'other root account')
+      a2_admin = user_factory(name: 'account 2 admin')
+      a2_teacher = user_factory(name: 'account 2 teacher')
+      account_admin_user(account: a2, user: a2_admin)
+      course_with_teacher(name: 'account 2 teacher', account: a2, user: a2_teacher)
+
+      get 'content_share_users', params: {course_id: a1_course.id, search_term: 'account 2'}
+      json = json_parse(response.body)
+      expect(json.map{|user| user['name']}).not_to include('account 2 admin', 'account 2 teacher')
+    end
+
+    it 'should still work for teachers whose course is concluded by term' do
+      term = Account.default.enrollment_terms.create!(:name => "long over")
+      term.set_overrides(Account.default, 'TeacherEnrollment' => { start_at: '2014-12-01', end_at: '2014-12-31' })
+      course_with_teacher_logged_in(active_all: true)
+      @course.update(:enrollment_term => term)
+
+      get 'content_share_users', params: {course_id: @course.id, search_term: 'teacher'}
+      json = json_parse(response.body)
+      expect(json[0]).to include({'name' => 'search teacher'})
+    end
+
+    context "sharding" do
+      specs_require_sharding
+
+      it "should still have a functional query when user is from another shard" do
+        @shard1.activate do
+          @cs_user = User.create!
+        end
+        @course.enroll_teacher(@cs_user, :enrollment_state => "active")
+        user_session(@cs_user)
+
+        sql = nil
+        allow(Api).to receive(:paginate) do |scope, _controller, _url|
+          sql = scope.to_sql
+        end
+
+        get 'content_share_users', params: {course_id: @course.id, search_term: 'hiyo'}
+        expect(sql).to_not include(@shard1.name) # can't just check for success since the query can still work depending on test shard setup
+      end
+    end
+  end
+
+  describe 'POST update' do
+    it 'allows an admin to change visibility' do
+      admin = account_admin_user
+      course = Course.create!
+      user_session(admin)
+
+      post 'update', params: { id: course.id,
+                               course: { course_visibility: 'public', indexed: true }}
+
+      course.reload
+      expect(course.is_public).to eq true
+      expect(course.indexed).to eq true
+
+    end
+
+    it 'allows the teacher to change visibility' do
+      course = Course.create!
+      teacher = teacher_in_course(course: course, active_all: true).user
+      user_session(teacher)
+
+      post 'update', params: { id: course.id,
+                               course: { course_visibility: 'public', indexed: true }}
+
+      course.reload
+      expect(course.is_public).to eq true
+      expect(course.indexed).to eq true
+    end
+
+    it 'does not allow a teacher without the permission to change visibility' do
+      course = Course.create!
+      teacher = teacher_in_course(course: course, active_all: true).user
+      course.account.role_overrides.create!(role: teacher_role, permission: 'manage_course_visibility', enabled: false)
+      user_session(teacher)
+
+      post 'update', params: { id: course.id,
+                               course: { course_visibility: 'public', indexed: true }}
+
+      course.reload
+      expect(course.is_public).not_to eq true
+      expect(course.indexed).not_to eq true
+    end
+
+    it 'does not allow an account admin without the permission to change visibility' do
+      admin = account_admin_user_with_role_changes(:role_changes => {'manage_course_visibility' => false})
+      course = Course.create!
+      user_session(admin)
+
+      post 'update', params: { id: course.id,
+                               course: { course_visibility: 'public', indexed: true }}
+
+      course.reload
+      expect(course.is_public).not_to eq true
+      expect(course.indexed).not_to eq true
+    end
+
+    it 'allows a site admin to change visibility even if account admins cannot' do
+      site_admin = site_admin_user
+      account = Account.create(name: 'fake-o')
+      account_with_role_changes(:account => account, :role_changes => { 'manage_course_visibility' => false })
+      course = course_factory(:account => account)
+      user_session(site_admin)
+
+      post 'update', params: { id: course.id,
+                               course: { course_visibility: 'public', indexed: true }}
+
+      course.reload
+      expect(course.is_public).to eq true
+      expect(course.indexed).to eq true
     end
   end
 end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -17,7 +19,7 @@
 #
 
 require File.expand_path(File.dirname(__FILE__) + '/../../spec_helper')
-require File.expand_path(File.dirname(__FILE__) + '/../../helpers/graphql_type_tester')
+require_relative "../graphql_spec_helper"
 
 describe Types::EnrollmentType do
   let_once(:enrollment) { student_in_course(active_all: true) }
@@ -53,6 +55,16 @@ describe Types::EnrollmentType do
           }
         GQL
       ).to eq @gp2.id.to_s
+    end
+
+    it "returns the overall course grade when gradingPeriodId is null" do
+      expect(
+        enrollment_type.resolve(<<~GQL, current_user: @teacher)
+          grades(gradingPeriodId: null) {
+            finalScore
+          }
+        GQL
+      ).to eq enrollment.computed_final_score
     end
 
     it "works for courses with no grading periods" do

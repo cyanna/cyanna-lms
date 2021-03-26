@@ -23,9 +23,11 @@ import {DropTarget} from 'react-dnd'
 import {string, func, bool} from 'prop-types'
 import I18n from 'i18n!discussions_v2'
 import moment from 'moment'
+import {ScreenReaderContent} from '@instructure/ui-a11y'
 
-import ToggleDetails from '@instructure/ui-toggle-details/lib/components/ToggleDetails'
-import Text from '@instructure/ui-elements/lib/components/Text'
+import {ToggleDetails} from '@instructure/ui-toggle-details'
+import {Text, Heading} from '@instructure/ui-elements'
+import {Flex} from '@instructure/ui-flex'
 import update from 'immutability-helper'
 
 import select from '../../shared/select'
@@ -63,13 +65,13 @@ export const discussionTarget = {
 export class DiscussionsContainer extends Component {
   static propTypes = {
     cleanDiscussionFocus: func.isRequired,
-    closedState: bool, // eslint-disable-line
+    closedState: bool, // eslint-disable-line react/no-unused-prop-types this IS really used
     connectDropTarget: func,
     deleteDiscussion: func.isRequired,
     deleteFocusDone: func.isRequired,
-    deleteFocusPending: bool.isRequired, // eslint-disable-line
+    deleteFocusPending: bool.isRequired, // eslint-disable-line react/no-unused-prop-types this IS really used
     discussions: discussionList.isRequired,
-    handleDrop: func, // eslint-disable-line
+    handleDrop: func, // eslint-disable-line react/no-unused-prop-types this IS really used
     onMoveDiscussion: func,
     permissions: propTypes.permissions.isRequired,
     pinned: bool,
@@ -89,7 +91,6 @@ export class DiscussionsContainer extends Component {
 
   constructor(props) {
     super(props)
-    this.moveCard = this.moveCard.bind(this)
     this.state = {
       discussions: props.discussions,
       expanded: true
@@ -138,7 +139,7 @@ export class DiscussionsContainer extends Component {
     this.toggleBtn = c && c.querySelector('button')
   }
 
-  moveCard(dragIndex, hoverIndex) {
+  moveCard = (dragIndex, hoverIndex) => {
     // Only pinned discussions can be repositioned, others are sorted by
     // recent activity
     if (!this.props.pinned) {
@@ -153,34 +154,36 @@ export class DiscussionsContainer extends Component {
 
     const newDiscussions = update(this.state, {
       discussions: {
-        $splice: [[dragIndex, 1], [hoverIndex, 0, dragDiscussion]]
+        $splice: [
+          [dragIndex, 1],
+          [hoverIndex, 0, dragDiscussion]
+        ]
       }
     })
     this.setState({discussions: newDiscussions.discussions})
   }
 
   renderDiscussions() {
-    return this.state.discussions.map(
-      discussion =>
-        this.props.permissions.moderate ? (
-          <ConnectedDraggableDiscussionRow
-            key={discussion.id}
-            discussion={discussion}
-            deleteDiscussion={this.props.deleteDiscussion}
-            getDiscussionPosition={this.getDiscussionPosition}
-            onMoveDiscussion={this.props.onMoveDiscussion}
-            moveCard={this.moveCard}
-            draggable
-          />
-        ) : (
-          <ConnectedDiscussionRow
-            key={discussion.id}
-            discussion={discussion}
-            deleteDiscussion={this.props.deleteDiscussion}
-            onMoveDiscussion={this.props.onMoveDiscussion}
-            draggable={false}
-          />
-        )
+    return this.state.discussions.map(discussion =>
+      this.props.permissions.moderate ? (
+        <ConnectedDraggableDiscussionRow
+          key={discussion.id}
+          discussion={discussion}
+          deleteDiscussion={this.props.deleteDiscussion}
+          getDiscussionPosition={this.getDiscussionPosition}
+          onMoveDiscussion={this.props.onMoveDiscussion}
+          moveCard={this.moveCard}
+          draggable
+        />
+      ) : (
+        <ConnectedDiscussionRow
+          key={discussion.id}
+          discussion={discussion}
+          deleteDiscussion={this.props.deleteDiscussion}
+          onMoveDiscussion={this.props.onMoveDiscussion}
+          draggable={false}
+        />
+      )
     )
   }
 
@@ -196,20 +199,30 @@ export class DiscussionsContainer extends Component {
     return this.props.connectDropTarget(
       <div className="discussions-container__wrapper">
         <span ref={this.wrapperToggleRef}>
+          <ScreenReaderContent>
+            <Heading level="h2">{this.props.title}</Heading>
+          </ScreenReaderContent>
           <ToggleDetails
+            fluidWidth
             expanded={this.state.expanded}
             onToggle={this.toggleExpanded}
             summary={
-              <Text weight="bold" as="h2">
-                {this.props.title}
-              </Text>
+              <Flex>
+                <Flex.Item shouldGrow shouldShrink>
+                  <div aria-hidden="true">
+                    <Text weight="bold">{this.props.title}</Text>
+                  </div>
+                </Flex.Item>
+                {!this.props.pinned ? (
+                  <Flex.Item shouldShrink textAlign="end">
+                    <span className="recent-activity-text-container">
+                      <Text fontStyle="italic">{I18n.t('Ordered by Recent Activity')}</Text>
+                    </span>
+                  </Flex.Item>
+                ) : null}
+              </Flex>
             }
           >
-            {!this.props.pinned ? (
-              <span className="recent-activity-text-container">
-                <Text fontStyle="italic">{I18n.t('Ordered by Recent Activity')}</Text>
-              </span>
-            ) : null}
             {this.props.discussions.length
               ? this.renderDiscussions()
               : this.renderBackgroundImage()}
@@ -232,7 +245,7 @@ export const mapState = (state, ownProps) => {
     discussions: filteredDiscussions,
     permissions: state.permissions
   }
-  return Object.assign({}, ownProps, propsFromState)
+  return {...ownProps, ...propsFromState}
 }
 
 const mapDispatch = dispatch => {
@@ -250,10 +263,7 @@ export const DroppableDiscussionsContainer = DropTarget(
   })
 )(DiscussionsContainer)
 
-export const ConnectedDiscussionsContainer = connect(
-  mapState,
-  mapDispatch
-)(DiscussionsContainer)
+export const ConnectedDiscussionsContainer = connect(mapState, mapDispatch)(DiscussionsContainer)
 
 export const DroppableConnectedDiscussionsContainer = connect(
   mapState,

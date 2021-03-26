@@ -20,8 +20,11 @@ require 'securerandom'
 
 class EportfolioEntriesController < ApplicationController
   include EportfolioPage
-  before_action :rich_content_service_config
+  before_action :rce_js_env
   before_action :get_eportfolio
+
+  class EportfolioNotFound < StandardError; end
+  rescue_from EportfolioNotFound, with: :rescue_expected_error_type
 
   def create
     if authorized_action(@portfolio, @current_user, :update)
@@ -64,7 +67,7 @@ class EportfolioEntriesController < ApplicationController
       end
       @category = @page.eportfolio_category
       eportfolio_page_attributes
-      render "eportfolios/show"
+      render "eportfolios/show", stream: can_stream_template?
     end
   end
 
@@ -79,7 +82,7 @@ class EportfolioEntriesController < ApplicationController
         entry_params[:eportfolio_category] = category
       end
       respond_to do |format|
-        if @entry.update_attributes!(entry_params)
+        if @entry.update!(entry_params)
           format.html { redirect_to eportfolio_entry_url(@portfolio, @entry) }
           format.json { render :json => @entry }
         else
@@ -110,11 +113,15 @@ class EportfolioEntriesController < ApplicationController
       @entry = @portfolio.eportfolio_entries.find(params[:entry_id])
       @category = @entry.eportfolio_category
       @attachment = @portfolio.user.all_attachments.shard(@portfolio.user).where(uuid: params[:attachment_id]).first
+      unless @attachment.present?
+        return render json: { message: t('errors.not_found', "Not Found") }, status: :not_found
+      end
       # @entry.check_for_matching_attachment_id
       begin
         redirect_to file_download_url(@attachment, { :verifier => @attachment.uuid })
-      rescue
-        raise t('errors.not_found', "Not Found")
+      rescue StandardError => e
+        Canvas::Errors.capture_exception(:eportfolios, e, :warn)
+        raise EportfolioNotFound, t('errors.not_found', "Not Found")
       end
     end
   end
@@ -136,10 +143,6 @@ class EportfolioEntriesController < ApplicationController
   end
 
   protected
-  def rich_content_service_config
-    rce_js_env(:basic)
-  end
-
   def eportfolio_entry_params
     params.require(:eportfolio_entry).permit(:name, :allow_comments, :show_comments)
   end

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -21,8 +23,6 @@ describe "master courses - child courses - assignment locking" do
   include_context "in-process server selenium tests"
 
   before :once do
-    Account.default.enable_feature!(:master_courses)
-
     due_date = format_date_for_view(Time.zone.now - 1.month)
     @copy_from = course_factory(:active_all => true)
     @template = MasterCourses::MasterTemplate.set_as_master_course(@copy_from)
@@ -43,7 +43,7 @@ describe "master courses - child courses - assignment locking" do
   end
 
   before :each do
-    enable_all_rcs Account.default
+    Account.default.enable_feature!(:rce_enhancements)
     stub_rcs_config
     user_session(@teacher)
   end

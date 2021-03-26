@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2017 - present Instructure, Inc.
 #
@@ -40,7 +42,7 @@ describe "reply attachment" do
     f('.discussion-reply-box').click
     wait_for_ajaximations
     f('.cancel_button').click
-    f('.discussion-reply-box').click
+    force_click('.discussion-reply-box')
     wait_for_ajaximations
     begin
       tinymce = f('.mce-tinymce')
@@ -86,7 +88,6 @@ describe "reply attachment" do
   end
 
   it 'media attachment modal can be opened' do
-    Account.default.enable_feature!(:integrate_arc_rce)
     Discussion.visit(@course, @topic)
     Discussion.start_reply_with_media
     expect(Discussion.media_modal).to be_displayed

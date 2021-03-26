@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -135,11 +137,6 @@ describe CoursesHelper do
     it "should return nil if not graded" do
       submission = Submission.new
       expect(readable_grade(submission)).to be_nil
-    end
-
-    it "should return a capitalized grade without an assignment" do
-      submission = Submission.new(:grade => 'unknown', :workflow_state => 'graded')
-      expect(readable_grade(submission)).to eq 'Unknown'
     end
 
     it "should return the score if graded" do

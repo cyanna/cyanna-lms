@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2015 - present Instructure, Inc.
 #
@@ -89,15 +91,13 @@ module Turnitin
           allow(original_submission_response).to receive(:headers).and_return({})
           expect_any_instance_of(TurnitinApi::OutcomesResponseTransformer).to receive(:original_submission).and_yield(original_submission_response)
           allow_any_instance_of(subject.class).to receive(:attempt_number).and_return(attempt_number)
-          expect_any_instance_of(subject.class).to receive(:send_later_enqueue_args).with(
-            :process,
-            {
+          mock = double()
+          expect_any_instance_of(subject.class).to receive(:delay).with(
               max_attempts: subject.class.max_attempts,
               priority: Delayed::LOW_PRIORITY,
               attempts: attempt_number,
-              run_at: time + (attempt_number ** 4) + 5
-            }
-          )
+              run_at: time + (attempt_number ** 4) + 5).and_return(mock)
+          expect(mock).to receive(:process)
           Timecop.freeze(time) do
             subject.process
           end
@@ -146,12 +146,15 @@ module Turnitin
     end
 
     describe "#update_originality_data" do
-      it 'raises an error if max attempts are not exceeded' do
+      it 'raises an error and sends stat if max attempts are not exceeded' do
         allow_any_instance_of(subject.class).to receive(:attempt_number).and_return(subject.class.max_attempts-1)
         mock_turnitin_client = double('turnitin_client')
         allow(mock_turnitin_client).to receive(:scored?).and_return(false)
         allow(subject).to receive(:turnitin_client).and_return(mock_turnitin_client)
         submission = lti_assignment.submit_homework(lti_student, attachments:[attachment], submission_type: 'online_upload')
+        expect(InstStatsd::Statsd).to receive(:increment).with("submission_not_scored.account_#{lti_assignment.root_account.global_id}",
+                                                               short_stat: 'submission_not_scored',
+                                                               tags: { root_account_id: lti_assignment.root_account.global_id }).once
         expect do
           subject.update_originality_data(submission, attachment.asset_string)
         end.to raise_error Turnitin::Errors::SubmissionNotScoredError
@@ -166,6 +169,16 @@ module Turnitin
         subject.update_originality_data(submission, attachment.asset_string)
         expect(submission.turnitin_data[attachment.asset_string][:status]).to eq 'error'
         expect(submission.turnitin_data[attachment.asset_string][:public_error_message]).to start_with "Turnitin has not"
+      end
+    end
+
+    describe "#resubmit" do
+      it "doesn't serialize the whole TII client" do
+        expect(subject.turnitin_client).to_not be_nil
+        submission = Submission.new(id: 1)
+        output_job = subject.resubmit(submission, "asset_string")
+        output_job = Delayed::Job.where(tag: "Turnitin::OutcomeResponseProcessor#update_originality_data").last
+        expect(output_job.handler).to_not include("ruby/object:Turnitin::TiiClient")
       end
     end
   end

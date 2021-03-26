@@ -16,92 +16,55 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-import serviceRCELoader from '../rce/serviceRCELoader'
-import {RCELOADED_EVENT_NAME, send, destroy, focus} from '../rce/RceCommandShim'
-import Sidebar from '../rce/Sidebar'
-import featureFlag from '../rce/featureFlag'
+//
+// NOTE!: Be sure to call RichContentEditor.closeRCE(target) in your source page
+//        whenever the user purposfully leaves the page (by clicking Cancel or Submit)
+//        This gets any autosaved content cleared so they won't be prompted next
+//        time around.
+
+import serviceRCELoader from './serviceRCELoader'
+import {RCELOADED_EVENT_NAME, send, destroy, focus} from './RceCommandShim'
+import deprecated from '../helpers/deprecated'
 import $ from 'jquery'
+
+const Sidebar = !ENV.use_rce_enhancements && require('../rce/Sidebar').default
 
 function loadServiceRCE(target, tinyMCEInitOptions, callback) {
   target.css('display', 'none')
 
   const originalOnFocus = tinyMCEInitOptions.onFocus
-  // eslint-disable-next-line no-param-reassign
+
   tinyMCEInitOptions.onFocus = (...args) => {
-    RichContentEditor.showSidebar()
+    if (!ENV.use_rce_enhancements) RichContentEditor.showSidebar()
     if (originalOnFocus instanceof Function) {
       originalOnFocus(...args)
     }
   }
 
   serviceRCELoader.loadOnTarget(target, tinyMCEInitOptions, (textarea, remoteEditor) => {
+    const $target = node2jquery(target)
     const $textarea = freshNode($(textarea))
     $textarea.data('remoteEditor', remoteEditor)
-    target.trigger(RCELOADED_EVENT_NAME, remoteEditor)
+    $target.trigger(RCELOADED_EVENT_NAME, remoteEditor)
     if (callback) {
-      callback()
+      callback(remoteEditor)
     }
   })
 }
 
-let legacyTinyMCELoaded = false
-function loadLegacyTinyMCE(callback) {
-  if (legacyTinyMCELoaded) {
-    callback()
-    return
-  }
-
-  require.ensure(
-    [],
-    require => {
-      legacyTinyMCELoaded = true
-      require('tinymce.editor_box')
-      require('compiled/tinymce')
-      require('./initA11yChecker')
-      callback()
-    },
-    'legacyTinymceAsyncChunk'
-  )
-}
-
-function hideTextareaWhileLoadingLegacyRCE(target, callback) {
-  if (legacyTinyMCELoaded) {
-    callback()
-    return
-  }
-
-  const previousOpacity = target[0].style.opacity
-  target.css('opacity', 0)
-  loadLegacyTinyMCE(() => {
-    target.css('opacity', previousOpacity)
-    callback()
-  })
-}
-
-function loadLegacyRCE(target, tinyMCEInitOptions, callback) {
-  target.css('display', '')
-  hideTextareaWhileLoadingLegacyRCE(target, () => {
-    tinyMCEInitOptions.defaultContent
-      ? target
-          .editorBox(tinyMCEInitOptions)
-          .editorBox('set_code', tinyMCEInitOptions.defaultContent)
-      : target.editorBox(tinyMCEInitOptions)
-    if (callback) callback()
-  })
-}
-
 function establishParentNode(target) {
+  const $target = node2jquery(target)
   // some areas would wipe out the whole form
   // if we rendered a new editor into the textarea parent
   // element, so this is some helper functionality to create/reuse
   // a parent element if that's the case
-  const targetId = target.attr('id')
+  const targetId = $target.attr('id')
   // xsslint safeString.identifier targetId parentId
   const parentId = `tinymce-parent-of-${targetId}`
-  if (target.parent().attr('id') == parentId) {
+  if ($target.parent().attr('id') === parentId) {
     // parent wrapper already exits
   } else {
-    return target.wrap(`<div id='${parentId}' style='visibility: hidden'></div>`)
+    return $target.wrap(`<div id='${parentId}' style='visibility: hidden'></div>`)
   }
 }
 
@@ -120,8 +83,9 @@ function nextID() {
  * doesn't, give it a random one.
  * @private
  */
-function ensureID($el) {
-  const id = $el.attr('id')
+function ensureID(el) {
+  const $el = $(el)
+  const id = 'attr' in $el ? $el.attr('id') : $el.id
   if (!id || id == '') {
     $el.attr('id', nextID())
   }
@@ -133,7 +97,8 @@ function ensureID($el) {
  *
  * @private
  */
-function freshNode($target) {
+function freshNode(target) {
+  const $target = node2jquery(target)
   // Try to get the id
   const targetId = $target.attr('id')
   if (!targetId || targetId == '') {
@@ -147,6 +112,9 @@ function freshNode($target) {
   return newTarget
 }
 
+const deprecationMsg =
+  "with the new RCE you don't need to call this method, it is a no op since there is no sidebar"
+
 const RichContentEditor = {
   /**
    * start the remote module (if the feature flag is on) loading so that it's
@@ -156,10 +124,8 @@ const RichContentEditor = {
    *
    * @public
    */
-  preloadRemoteModule() {
-    if (featureFlag()) {
-      serviceRCELoader.preload()
-    }
+  preloadRemoteModule(cb = () => {}) {
+    return serviceRCELoader.preload(cb)
   },
 
   /**
@@ -168,9 +134,9 @@ const RichContentEditor = {
    *
    * @public
    */
-  initSidebar(subscriptions = {}) {
-    Sidebar.init(subscriptions)
-  },
+  initSidebar: deprecated(deprecationMsg, (subscriptions = {}) => {
+    if (!ENV.use_rce_enhancements) Sidebar.init(subscriptions)
+  }),
 
   /**
    * show the sidebar if it's around
@@ -178,9 +144,9 @@ const RichContentEditor = {
    * @public
    */
 
-  showSidebar() {
-    Sidebar.show()
-  },
+  showSidebar: deprecated(deprecationMsg, () => {
+    if (!ENV.use_rce_enhancements) Sidebar.show()
+  }),
 
   /**
    * hide the sidebar if it's around
@@ -188,9 +154,9 @@ const RichContentEditor = {
    * @public
    */
 
-  hideSidebar() {
-    Sidebar.hide()
-  },
+  hideSidebar: deprecated(deprecationMsg, () => {
+    if (!ENV.use_rce_enhancements) Sidebar.hide()
+  }),
 
   /**
    * load an editor into the target element with the given options. most
@@ -205,9 +171,12 @@ const RichContentEditor = {
    *     the element's siblings, so when the RCE is rendered into the
    *     container it doesn't wipe out other parts of the DOM
    *
+   * Be sure to call RichContentEditor.closeRCE(target) if the user cleanly exits the page
+   *
    * @public
    */
-  loadNewEditor($target, tinyMCEInitOptions = {}, cb) {
+  loadNewEditor(target, tinyMCEInitOptions = {}, cb) {
+    let $target = node2jquery(target)
     if ($target.length <= 0) {
       // no actual target, just short circuit out
       return
@@ -218,32 +187,24 @@ const RichContentEditor = {
     // avoid modifying the original options object provided
     tinyMCEInitOptions = $.extend({}, tinyMCEInitOptions)
 
-    const callback = () => {
+    const callback = rce => {
       if (tinyMCEInitOptions.focus) {
         // call activateRCE once loaded
         this.activateRCE($target)
       }
       if (cb) {
-        cb()
+        cb(rce)
       }
     }
 
-    if (featureFlag()) {
-      $target = this.freshNode($target)
+    $target = this.freshNode($target)
 
-      if (tinyMCEInitOptions.manageParent) {
-        delete tinyMCEInitOptions.manageParent
-        establishParentNode($target)
-      }
-
-      loadServiceRCE($target, tinyMCEInitOptions, callback)
-    } else {
-      loadLegacyRCE($target, tinyMCEInitOptions, callback)
-
-      // listen for editor_box_focus events on our target, and trigger
-      // activateRCE from them
-      $target.on('editor_box_focus', () => this.activateRCE($target))
+    if (tinyMCEInitOptions.manageParent) {
+      delete tinyMCEInitOptions.manageParent
+      establishParentNode($target)
     }
+
+    loadServiceRCE($target, tinyMCEInitOptions, callback)
 
     hideResizeHandleForScreenReaders()
   },
@@ -253,10 +214,9 @@ const RichContentEditor = {
    *
    * @public
    */
-  callOnRCE($target, methodName, ...args) {
-    if (featureFlag()) {
-      $target = this.freshNode($target)
-    }
+  callOnRCE(target, methodName, ...args) {
+    let $target = node2jquery(target)
+    $target = this.freshNode($target)
     return send($target, methodName, ...args)
   },
 
@@ -265,12 +225,22 @@ const RichContentEditor = {
    *
    * @public
    */
-  destroyRCE($target) {
-    if (featureFlag()) {
-      $target = this.freshNode($target)
-    }
+  destroyRCE(target) {
+    let $target = node2jquery(target)
+    $target = this.freshNode($target)
     destroy($target)
-    Sidebar.hide()
+    if (!ENV.use_rce_enhancements) Sidebar.hide()
+  },
+
+  /**
+   * Tell the RCE we're closing
+   *
+   * @public
+   */
+  closeRCE(target) {
+    if (window.ENV.use_rce_enhancements) {
+      this.callOnRCE(target, 'RCEClosed')
+    }
   },
 
   /**
@@ -279,16 +249,22 @@ const RichContentEditor = {
    *
    * @private
    */
-  activateRCE($target) {
-    if (featureFlag()) {
-      $target = this.freshNode($target)
-    }
+  activateRCE(target) {
+    let $target = node2jquery(target)
+    $target = this.freshNode($target)
     focus($target)
-    Sidebar.show()
+    if (!ENV.use_rce_enhancements) Sidebar.show()
   },
 
   freshNode,
-  ensureID
+  ensureID,
+  node2jquery
+}
+
+// while the internals work with jquery, let's not
+// require that of our consumer
+function node2jquery(node) {
+  return node && node.length ? node : $(node)
 }
 
 export default RichContentEditor
