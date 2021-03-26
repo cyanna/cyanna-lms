@@ -197,8 +197,6 @@ PATH
       rubyzip (~> 2.0)
     config_file (0.1.0)
       rails (>= 5.0)
-    csv_diff (1.0.0)
-      sqlite3
     diigo (1.0.0)
       nokogiri
     dynamic_settings (0.1.0)
@@ -968,7 +966,6 @@ DEPENDENCIES
   config_file!
   crack (= 0.4.3)
   crocodoc-ruby (= 0.0.1)
-  csv_diff!
   database_cleaner (~> 1.5, >= 1.5.3)
   db-query-matchers (= 0.10.0)
   ddtrace (= 0.42.0)
@@ -1107,7 +1104,6 @@ DEPENDENCIES
   simply_versioned!
   spring (= 2.1.1)
   spring-commands-rspec (= 1.0.4)
-  sqlite3 (= 1.4.2)
   statsd-ruby (= 1.4.0)
   stringify_ids!
   switchman (= 2.0.6)

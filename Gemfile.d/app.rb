@@ -178,6 +178,3 @@ path 'gems' do
   gem 'utf8_cleaner'
   gem 'workflow'
 end
-
-gem 'csv_diff', path: 'gems'
-  gem 'sqlite3', '1.4.2'
